@@ -1,0 +1,30 @@
+# --- 핵심 ---
+httpx>=0.27
+PyYAML>=6.0
+python-dotenv>=1.0
+feedparser>=6.0
+beautifulsoup4>=4.12
+lxml>=5.0
+tenacity>=8.2
+python-slugify>=8.0
+
+# --- 음성 합성 (무료) ---
+edge-tts>=6.1.12
+
+# --- 이미지/썸네일 ---
+Pillow>=10.3
+
+# --- 업로드 ---
+google-api-python-client>=2.130
+google-auth>=2.29
+google-auth-oauthlib>=1.2
+
+# --- 티스토리 브라우저 자동화 ---
+playwright>=1.44
+
+# --- LLM 공급자 (선택 설치) ---
+google-genai>=1.0 ; python_version >= "3.9"
+anthropic>=1.0
+
+# --- 테스트 ---
+pytest>=8.0

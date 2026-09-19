@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autopub"
+version = "0.1.0"
+description = "트렌드 기반 티스토리·유튜브 쇼츠·틱톡 자동 발행 파이프라인"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+autopub = "autopub.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q -m 'not integration'"
+markers = ["integration: 네트워크/ffmpeg 가 필요한 통합 테스트"]

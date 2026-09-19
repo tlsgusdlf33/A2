@@ -1,0 +1,155 @@
+# =====================================================================
+#  autopub 설정
+#  - 값은 config/local.yaml 로 덮어쓸 수 있습니다(gitignore 됨).
+#  - 환경변수는 .env 참조.
+# =====================================================================
+
+general:
+  timezone: Asia/Seoul
+  locale: ko_KR
+  # 산출물/작업 디렉터리
+  work_dir: work
+  out_dir: out
+  state_file: state/state.json
+  # 같은 주제를 며칠 동안 재발행하지 않을지
+  dedupe_days: 7
+  # 드라이런(실제 발행 대신 파일만 생성)
+  dry_run: false
+
+# ---------------------------------------------------------------------
+# 트렌드 수집: 발행 시점 기준 "가장 이슈되는 주제"를 뽑는다
+# ---------------------------------------------------------------------
+trends:
+  geo: KR
+  # 각 소스별 가중치 (합이 1일 필요는 없음)
+  sources:
+    google_trends:
+      enabled: true
+      weight: 1.0
+      # 무료 RSS 엔드포인트 (키 불필요)
+      rss_url: "https://trends.google.com/trending/rss?geo={geo}"
+    youtube_trending:
+      enabled: true
+      weight: 0.8
+      # videos.list(chart=mostPopular) = 1 유닛
+      region_code: KR
+      max_results: 30
+    news_rss:
+      enabled: true
+      weight: 0.6
+      feeds:
+        - "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
+        - "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=ko&gl=KR&ceid=KR:ko"
+        - "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko"
+        - "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=ko&gl=KR&ceid=KR:ko"
+
+  # 주제 필터 — 저품질/민감 주제 회피 (수익화·정책 리스크 관리)
+  blocklist_keywords:
+    - 부고
+    - 사망
+    - 살인
+    - 성폭행
+    - 마약
+    - 자살
+    - 도박
+    - 주가조작
+  # 최소 신선도(시간). 이보다 오래된 뉴스만 있는 주제는 제외
+  max_age_hours: 24
+
+# ---------------------------------------------------------------------
+# LLM — 본문/스크립트 생성
+# ---------------------------------------------------------------------
+llm:
+  # provider 는 .env 의 LLM_PROVIDER 로 결정 (gemini | anthropic | openai_compatible)
+  temperature: 0.7
+  max_output_tokens: 8000
+  # 무료 티어 보호: 분당 요청 간 최소 대기(초)
+  min_interval_sec: 5
+  # 실패 시 재시도
+  max_retries: 3
+
+# ---------------------------------------------------------------------
+# 플랫폼별 발행 설정 + 하루 최대 횟수
+# ---------------------------------------------------------------------
+platforms:
+
+  tistory:
+    enabled: true
+    # ⚠️ Tistory Open API 는 2024-02 종료됨 → 브라우저 자동화(Playwright)로 동작
+    mode: browser            # browser | api(레거시 토큰 보유자만)
+    # 하루 최대 발행 수.
+    # 기술적 API 상한은 없으나, 과다 발행은 저품질 블로그 판정/스팸 필터 위험이 큽니다.
+    # 8~10편이 "안전하게 최대"인 실전 권장치입니다. 더 올리려면 숫자만 바꾸세요.
+    daily_max: 8
+    # 발행 간 최소 간격(분) — 한꺼번에 쏟아내지 않기
+    min_gap_minutes: 60
+    visibility: public       # public | protected | private
+    category_id: ""          # 비우면 기본 카테고리
+    # 본문 목표 길이(한국어 기준 글자 수)
+    target_chars: [1800, 2800]
+    # 본문에 넣을 이미지 개수
+    images_per_post: 3
+    default_tags: []
+
+  youtube:
+    enabled: true
+    # YouTube Data API v3 무료 쿼터 = 10,000 units/day
+    # videos.insert = 1600 units → 하루 6회가 물리적 최대치
+    daily_quota_units: 10000
+    upload_cost_units: 1600
+    reserve_units: 400        # 트렌드 조회 등 기타 호출용 예비
+    # daily_max 를 비우면 쿼터에서 자동 계산((10000-400)//1600 = 6)
+    daily_max: null
+    min_gap_minutes: 90
+    privacy_status: public    # public | unlisted | private
+    category_id: "24"         # 24 = Entertainment, 25 = News & Politics
+    made_for_kids: false
+    # 쇼츠 규격
+    shorts:
+      max_seconds: 59
+      resolution: [1080, 1920]
+      fps: 30
+
+  tiktok:
+    enabled: true
+    # Content Posting API: 사용자 토큰당 6 requests/min,
+    # 계정당 일일 상한은 대략 15~25개(티어별 상이, 비공개 정책).
+    # 보수적으로 10개를 기본값으로 둡니다.
+    daily_max: 10
+    min_gap_minutes: 60
+    # 앱이 미심사(unaudited) 상태면 SELF_ONLY 만 허용됩니다.
+    privacy_level: PUBLIC_TO_EVERYONE   # PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | SELF_ONLY
+    disable_comment: false
+    disable_duet: false
+    disable_stitch: false
+
+# ---------------------------------------------------------------------
+# 영상 제작 (무료 스택: edge-tts + 무료 스톡 + ffmpeg)
+# ---------------------------------------------------------------------
+video:
+  # 한국어 Neural 보이스 (edge-tts, 무료)
+  voice: ko-KR-SunHiNeural     # 대안: ko-KR-InJoonNeural, ko-KR-HyunsuMultilingualNeural
+  rate: "+8%"
+  pitch: "+0Hz"
+  # 스크립트 목표 길이(초)
+  target_seconds: [40, 55]
+  # 자막
+  subtitles:
+    enabled: true
+    font_size: 72
+    font_color: "white"
+    outline_color: "black"
+    outline_width: 4
+    # 한 화면에 띄울 최대 글자 수
+    max_chars_per_cue: 18
+    margin_v: 420
+  # 배경 클립 소스 우선순위
+  stock_providers: [pexels, pixabay]
+  # 배경 전환 간격(초)
+  bg_clip_seconds: 5
+  # 배경 어둡게(자막 가독성)
+  bg_darken: 0.35
+  bgm:
+    enabled: false
+    path: assets/bgm.mp3
+    volume: 0.08

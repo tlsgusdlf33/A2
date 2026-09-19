@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Secrets — 절대 커밋 금지
+.env
+secrets/
+*.token.json
+config/local.yaml
+
+# 산출물
+out/
+work/
+*.mp4
+*.mp3
+*.wav
+*.png
+!assets/**/*.png
+
+# 로그
+logs/
+*.log

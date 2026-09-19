@@ -1,0 +1,126 @@
+name: 쇼츠·틱톡 자동 발행
+
+# 한 번 실행에 영상 1개를 만들어 유튜브·틱톡에 동시 업로드한다.
+# 아래는 KST 08·11·14·17·20·23시 = 하루 6회
+# (유튜브 무료 쿼터 10,000 units ÷ 업로드 1,600 units = 하루 6회가 물리적 상한)
+on:
+  schedule:
+    - cron: "0 23,2,5,8,11,14 * * *"   # UTC 기준
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "한 플랫폼만 업로드"
+        type: choice
+        options: ["", "youtube", "tiktok"]
+        default: ""
+      dry_run:
+        description: "업로드 없이 영상만 생성"
+        type: boolean
+        default: false
+
+concurrency:
+  group: autopub-state
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: ffmpeg + 한글 폰트 설치
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-cjk
+          fc-list :lang=ko family | head -3
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 인증 정보 복원
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          TIKTOK_TOKEN_JSON: ${{ secrets.TIKTOK_TOKEN_JSON }}
+        run: |
+          mkdir -p secrets
+          if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
+            printf '%s' "$YOUTUBE_TOKEN_JSON" > secrets/youtube_token.json
+            chmod 600 secrets/youtube_token.json
+            echo "YouTube 토큰 복원됨"
+          fi
+          if [ -n "$TIKTOK_TOKEN_JSON" ]; then
+            printf '%s' "$TIKTOK_TOKEN_JSON" > secrets/tiktok_token.json
+            chmod 600 secrets/tiktok_token.json
+            echo "TikTok 토큰 복원됨"
+          fi
+
+      - name: 제작 및 업로드
+        env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-flash-latest' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-opus-5' }}
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENAI_COMPAT_API_KEY }}
+          OPENAI_COMPAT_BASE_URL: ${{ vars.OPENAI_COMPAT_BASE_URL }}
+          OPENAI_COMPAT_MODEL: ${{ vars.OPENAI_COMPAT_MODEL }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_TOKEN_FILE: secrets/youtube_token.json
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_TOKEN_FILE: secrets/tiktok_token.json
+          PYTHONPATH: src
+          AUTOPUB_DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: |
+          if [ -n "${{ inputs.only }}" ]; then
+            python -m autopub shorts --only "${{ inputs.only }}"
+          else
+            python -m autopub shorts
+          fi
+
+      - name: 갱신된 토큰 저장 안내
+        if: always()
+        run: |
+          echo "TikTok 리프레시 토큰은 실행 중 갱신될 수 있습니다."
+          echo "장기 운영 시 주기적으로 scripts/tiktok_oauth.py 로 재인증하세요."
+
+      - name: 결과 영상 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-${{ github.run_id }}
+          path: |
+            work/**/video.mp4
+            work/**/subs.srt
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: 발행 상태 커밋
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/state.json || true
+          if git diff --staged --quiet; then
+            echo "상태 변경 없음"
+          else
+            git commit -m "chore(state): 숏폼 발행 기록 업데이트 [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && break
+              sleep $((i * 5))
+            done
+          fi

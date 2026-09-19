@@ -1,0 +1,102 @@
+name: 티스토리 자동 발행
+
+# 한 번 실행에 1건씩 발행한다. 하루 최대 횟수는 크론 횟수로 맞춘다.
+# 아래는 KST 07·09·11·13·15·17·19·21시 = 하루 8회
+# (config 의 platforms.tistory.daily_max 와 맞춰 두세요)
+on:
+  schedule:
+    - cron: "0 22,0,2,4,6,8,10,12 * * *"   # UTC 기준
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "실제 발행 없이 HTML 만 생성"
+        type: boolean
+        default: false
+
+# 동시에 두 개가 돌면 상태 파일이 충돌한다
+concurrency:
+  group: autopub-state
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 의존성 설치
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: 인증 정보 복원
+        env:
+          TISTORY_STATE_JSON: ${{ secrets.TISTORY_STATE_JSON }}
+        run: |
+          mkdir -p secrets
+          if [ -n "$TISTORY_STATE_JSON" ]; then
+            printf '%s' "$TISTORY_STATE_JSON" > secrets/tistory_state.json
+            chmod 600 secrets/tistory_state.json
+            echo "티스토리 세션 복원됨"
+          else
+            echo "::warning::TISTORY_STATE_JSON 시크릿이 없습니다. 계정 로그인으로 시도합니다."
+          fi
+
+      - name: 발행
+        env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-flash-latest' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-opus-5' }}
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENAI_COMPAT_API_KEY }}
+          OPENAI_COMPAT_BASE_URL: ${{ vars.OPENAI_COMPAT_BASE_URL }}
+          OPENAI_COMPAT_MODEL: ${{ vars.OPENAI_COMPAT_MODEL }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          TISTORY_BLOG_NAME: ${{ vars.TISTORY_BLOG_NAME }}
+          TISTORY_KAKAO_ID: ${{ secrets.TISTORY_KAKAO_ID }}
+          TISTORY_KAKAO_PW: ${{ secrets.TISTORY_KAKAO_PW }}
+          TISTORY_STORAGE_STATE: secrets/tistory_state.json
+          PYTHONPATH: src
+          AUTOPUB_DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: python -m autopub blog
+
+      - name: 실패 시 스크린샷 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots-${{ github.run_id }}
+          path: logs/screenshots/
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: 발행 상태 커밋
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/state.json || true
+          if git diff --staged --quiet; then
+            echo "상태 변경 없음"
+          else
+            git commit -m "chore(state): 티스토리 발행 기록 업데이트 [skip ci]"
+            # 다른 워크플로가 먼저 푸시했을 수 있으니 리베이스 후 재시도
+            for i in 1 2 3; do
+              git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && break
+              sleep $((i * 5))
+            done
+          fi
