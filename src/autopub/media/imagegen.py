@@ -69,8 +69,13 @@ def _postprocess(path: Path, crop_watermark: bool) -> None:
 # --------------------------------------------------------------------------
 
 def _pollinations(prompt: str, seed: int, size: tuple[int, int], dest: Path) -> bool:
-    """키가 필요 없는 무료 엔드포인트."""
-    model = os.getenv("IMAGEGEN_MODEL", "flux")
+    """키가 필요 없는 무료 엔드포인트.
+
+    ⚠️ 익명 호출로 실제 서빙되는 모델은 하나뿐이다(현재 sana).
+    model 파라미터에 다른 이름을 넣어도 조용히 무시된다.
+    image-to-image(kontext)는 계정 등록이 필요해 여기선 쓸 수 없다.
+    """
+    model = os.getenv("IMAGEGEN_MODEL", "sana")
     encoded = urllib.parse.quote(prompt, safe="")
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"

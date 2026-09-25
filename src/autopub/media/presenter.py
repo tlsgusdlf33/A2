@@ -28,6 +28,56 @@ class PresenterScene:
     words: list[WordTiming] = field(default_factory=list)
 
 
+# 정지 이미지 한 장으로 '편집된 느낌'을 내는 샷 변형.
+# 레퍼런스 채널은 포즈가 다른 여러 장을 1초 간격으로 컷한다. 무료 엔드포인트로는
+# 얼굴을 유지한 포즈 변형이 안 되므로, 같은 사진을 다른 크기로 잡아 컷한다.
+#   (시작 줌, 끝 줌, 세로 중심 비율)  — 중심 0.5=가운데, 작을수록 위쪽
+# 줌을 크게 주면 안 된다. 진행자 사진이 이미 상반신 컷이라 확대하면
+# 머리 위 여백이 사라져 얼굴이 상단 헤드라인 뒤로 밀려 올라간다(실측).
+# 원본 구도를 유지하는 선에서 방향만 다르게 줘서 컷 리듬을 만든다.
+SHOTS: list[tuple[float, float, float]] = [
+    (1.00, 1.05, 0.50),   # 와이드 → 천천히 들어감
+    (1.10, 1.04, 0.48),   # 살짝 당긴 채 시작 → 빠짐
+    (1.04, 1.11, 0.52),   # 완만하게 들어감
+    (1.12, 1.06, 0.46),   # 당긴 채 시작 → 빠짐
+]
+
+
+def _shot_segment(
+    still: Path, dest: Path, seconds: float, width: int, height: int, fps: int,
+    shot: tuple[float, float, float],
+) -> Path:
+    """정지 이미지를 지정한 샷(줌·프레이밍)으로 잘라 영상 세그먼트를 만든다."""
+    z0, z1, y_center = shot
+    frames = max(1, int(round(seconds * fps)))
+    step = (z1 - z0) / frames
+
+    # zoompan 은 z 가 단조 증가/감소해야 자연스럽다
+    z_expr = (
+        f"min(zoom+{abs(step):.6f},{z1:.3f})" if z1 >= z0
+        else f"max(zoom-{abs(step):.6f},{z1:.3f})"
+    )
+    run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-loop", "1", "-i", str(still),
+            "-t", f"{seconds:.3f}", "-an",
+            "-vf",
+            f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+            f"crop={width * 2}:{height * 2},"
+            f"zoompan=z='{z_expr}'"
+            f":x='iw/2-(iw/zoom/2)'"
+            f":y='max(0,min(ih-ih/zoom,ih*{y_center:.2f}-(ih/zoom/2)))'"
+            f":d={frames}:s={width}x{height}:fps={fps},setsar=1",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-r", str(fps),
+            str(dest),
+        ],
+        timeout=600,
+    )
+    return dest
+
+
 def _escape_filter_path(path: Path) -> str:
     """ffmpeg 필터 인자에 들어갈 경로 이스케이프."""
     return str(path.resolve()).replace("\\", "/").replace(":", r"\:")
@@ -119,17 +169,26 @@ def build_presenter_video(
             f"crop={width}:{height},fps={fps},setsar=1[base]"
         )
     elif fallback_image and Path(fallback_image).exists():
-        log.info("진행자 클립이 없어 정지 이미지로 대체합니다: %s", Path(fallback_image).name)
-        frames = max(1, int(round(total * fps)))
-        step = 0.05 / frames
-        cmd += ["-loop", "1", "-i", str(fallback_image)]
-        base_filter = (
-            f"[0:v]scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
-            f"crop={width * 2}:{height * 2},"
-            f"zoompan=z='min(zoom+{step:.6f},1.05)'"
-            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-            f":d={frames}:s={width}x{height}:fps={fps},setsar=1[base]"
+        # 장면마다 다른 샷으로 잘라 이어 붙이면 한 장짜리 사진도 편집된 것처럼 보인다
+        log.info(
+            "진행자 클립이 없어 정지 이미지를 %d개 샷으로 나눠 씁니다: %s",
+            len(scenes), Path(fallback_image).name,
         )
+        shot_parts = [
+            _shot_segment(
+                Path(fallback_image), work / f"shot_{index:02d}.mp4",
+                scene.duration + hold_seconds, width, height, fps,
+                SHOTS[index % len(SHOTS)],
+            )
+            for index, scene in enumerate(scenes)
+        ]
+        base_track = (
+            shot_parts[0]
+            if len(shot_parts) == 1
+            else _concat_files(shot_parts, work / "base.mp4", work / "b.txt")
+        )
+        cmd += ["-i", str(base_track)]
+        base_filter = f"[0:v]fps={fps},setsar=1[base]"
     else:
         raise ValueError(
             "진행자 클립도 대체 이미지도 없습니다. "
