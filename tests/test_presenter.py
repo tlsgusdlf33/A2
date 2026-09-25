@@ -221,3 +221,91 @@ def test_resolve_overrides_only_given_fields():
     assert changed.seed == 99
     assert changed.outfit == base.outfit
     assert changed.face == base.face
+
+
+# ---------------------------------------------------------------- 진행자 소재 출처
+#
+# 파일만 봐서는 AI 생성물인지 알 수 없다. 틀리면 공시가 빠지거나(정책 위반)
+# 실제 촬영본에 불필요한 AI 고지가 붙는다. 사이드카로 판정한다.
+
+import json
+
+
+def _pipeline(tmp_path, **presenter):
+    from autopub.config import load_config
+    from autopub.pipeline import Pipeline
+    from autopub.state import State
+
+    config = load_config()
+    config.data["video"]["presenter"] = {
+        **config.data["video"].get("presenter", {}), **presenter
+    }
+    return Pipeline(config, State(tmp_path / "s.json"))
+
+
+def test_clip_defaults_to_not_synthetic(tmp_path):
+    """직접 촬영한 클립에 AI 고지를 붙이면 안 된다."""
+    clip = tmp_path / "presenter.mp4"
+    clip.write_bytes(b"x" * 4096)
+    pipeline = _pipeline(tmp_path, clip=str(clip))
+
+    source, still, synthetic = pipeline._resolve_presenter_source({})
+    assert source == clip and still is None
+    assert synthetic is False
+
+
+def test_sidecar_can_mark_clip_as_synthetic(tmp_path):
+    """AI 로 만든 클립이면 사이드카로 합성임을 밝힐 수 있어야 한다."""
+    clip = tmp_path / "presenter.mp4"
+    clip.write_bytes(b"x" * 4096)
+    (tmp_path / "presenter.json").write_text(json.dumps({"synthetic": True}), encoding="utf-8")
+
+    _, _, synthetic = _pipeline(tmp_path, clip=str(clip))._resolve_presenter_source({})
+    assert synthetic is True
+
+
+def test_still_defaults_to_synthetic(tmp_path):
+    """정지 이미지는 우리가 생성한 것이 기본이므로 고지를 켠다."""
+    still = tmp_path / "presenter.jpg"
+    still.write_bytes(b"x" * 4096)
+    pipeline = _pipeline(tmp_path, clip=str(tmp_path / "none.mp4"), still=str(still))
+
+    clip, image, synthetic = pipeline._resolve_presenter_source({})
+    assert clip is None and image == still
+    assert synthetic is True
+
+
+def test_sidecar_can_mark_still_as_real_footage(tmp_path):
+    still = tmp_path / "presenter.jpg"
+    still.write_bytes(b"x" * 4096)
+    (tmp_path / "presenter.json").write_text(json.dumps({"synthetic": False}), encoding="utf-8")
+
+    _, _, synthetic = _pipeline(
+        tmp_path, clip=str(tmp_path / "none.mp4"), still=str(still)
+    )._resolve_presenter_source({})
+    assert synthetic is False
+
+
+def test_clip_wins_over_still(tmp_path):
+    clip = tmp_path / "presenter.mp4"
+    clip.write_bytes(b"x" * 4096)
+    still = tmp_path / "presenter.jpg"
+    still.write_bytes(b"x" * 4096)
+
+    source, image, _ = _pipeline(
+        tmp_path, clip=str(clip), still=str(still)
+    )._resolve_presenter_source({})
+    assert source == clip and image is None
+
+
+def test_broken_sidecar_falls_back_to_default(tmp_path):
+    """사이드카가 깨졌다고 멈추면 안 되고, 안전한 기본값을 써야 한다."""
+    still = tmp_path / "presenter.jpg"
+    still.write_bytes(b"x" * 4096)
+    (tmp_path / "presenter.json").write_text("{깨진 JSON", encoding="utf-8")
+
+    _, _, synthetic = _pipeline(
+        tmp_path, clip=str(tmp_path / "none.mp4"), still=str(still)
+    )._resolve_presenter_source({})
+    # 정지 이미지의 기본값은 '합성' — 고지를 빠뜨리는 쪽보다 안전하다
+    assert synthetic is True

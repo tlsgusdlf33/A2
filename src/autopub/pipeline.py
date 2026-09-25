@@ -303,21 +303,7 @@ class Pipeline:
         resolution = shorts_cfg.get("resolution", [1080, 1920])
         size = (int(resolution[0]), int(resolution[1]))
 
-        clip = self.config.path("video.presenter.clip", "assets/presenter/presenter.mp4")
-        fallback = None
-        synthetic = False
-        if not clip.exists():
-            # 진행자 클립이 없으면 AI 앵커 정지 이미지로 대체한다
-            fallback = anchor_portrait(
-                self.config.path("video.news.anchor_dir", "assets/anchor"),
-                seed=int(video_cfg.get("news", {}).get("anchor_seed", 4242)),
-                provider=self.config.get("video.imagegen.provider"),
-            )
-            synthetic = fallback is not None
-            if fallback is None:
-                raise RuntimeError(
-                    f"진행자 클립({clip})도 AI 앵커도 준비하지 못했습니다."
-                )
+        clip, fallback, synthetic = self._resolve_presenter_source(video_cfg)
 
         accents = list(presenter_cfg.get("accents", ["blue", "yellow", "red"])) or ["blue"]
         card_ratio = float(presenter_cfg.get("card_top_ratio", 0.66))
@@ -374,7 +360,7 @@ class Pipeline:
         bgm_cfg = video_cfg.get("bgm", {})
         result = build_presenter_video(
             scenes, work / "video.mp4", work,
-            presenter_clip=clip if clip.exists() else None,
+            presenter_clip=clip,
             fallback_image=fallback,
             width=size[0], height=size[1],
             fps=int(shorts_cfg.get("fps", 30)),
@@ -401,6 +387,48 @@ class Pipeline:
             log.warning("썸네일 추출 실패(무시): %s", exc)
 
         return result.path, script, thumbnail
+
+    def _resolve_presenter_source(self, video_cfg: dict):
+        """진행자 화면 소스를 정한다. (클립, 정지이미지, 합성여부)
+
+        우선순위: 촬영/준비된 클립 → 진행자 정지 이미지 → AI 앵커.
+
+        합성 여부는 소재 옆의 사이드카(presenter.json)에서 읽는다.
+        파일만 봐서는 AI 생성물인지 알 수 없는데, 이걸 틀리면 공시가 빠지거나
+        실제 촬영본에 불필요한 AI 고지가 붙는다.
+        """
+        import json
+
+        def provenance(asset: Path, default: bool) -> bool:
+            sidecar = asset.with_suffix(".json")
+            if not sidecar.exists():
+                return default
+            try:
+                return bool(json.loads(sidecar.read_text(encoding="utf-8")).get("synthetic", default))
+            except (OSError, json.JSONDecodeError) as exc:
+                log.warning("진행자 소재 정보를 읽지 못했습니다 (%s): %s", sidecar, exc)
+                return default
+
+        clip = self.config.path("video.presenter.clip", "assets/presenter/presenter.mp4")
+        if clip.exists():
+            # 클립은 보통 직접 촬영본이므로 기본값은 '합성 아님'
+            return clip, None, provenance(clip, default=False)
+
+        still = self.config.path("video.presenter.still", "assets/presenter/presenter.jpg")
+        if still.exists():
+            log.info("진행자 정지 이미지를 사용합니다: %s", still)
+            return None, still, provenance(still, default=True)
+
+        anchor = anchor_portrait(
+            self.config.path("video.news.anchor_dir", "assets/anchor"),
+            seed=int(video_cfg.get("news", {}).get("anchor_seed", 4242)),
+            provider=self.config.get("video.imagegen.provider"),
+        )
+        if anchor is None:
+            raise RuntimeError(
+                f"진행자 클립({clip})도, 정지 이미지({still})도, AI 앵커도 준비하지 못했습니다."
+            )
+        return None, anchor, True
 
     # ---- 뉴스 방송형 (생성 이미지 + AI 앵커) ----
 

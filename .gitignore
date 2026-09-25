@@ -17,11 +17,13 @@ out/
 work/
 assets/.imgcache/
 assets/anchor/candidates/
+assets/presenter/candidates/
 *.mp4
 *.mp3
 *.wav
 *.png
 !assets/**/*.png
+!assets/**/*.jpg
 
 # 로그
 logs/
