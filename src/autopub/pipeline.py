@@ -19,6 +19,10 @@ from .llm import build_llm
 from .logutil import get_logger
 from .media import (
     BroadcastSpec,
+    OverlaySpec,
+    PresenterScene,
+    build_presenter_video,
+    render_overlay,
     CardScene,
     CardSpec,
     Theme,
@@ -44,7 +48,7 @@ from .publishers import (
 )
 from .state import State
 from .trends import TrendAggregator, Topic
-from .util import ensure_dir, now_kst, slugify_ko
+from .util import ensure_dir, now_kst, slugify_ko, truncate
 
 log = get_logger(__name__)
 
@@ -262,12 +266,141 @@ class Pipeline:
 
     def _make_video(self, topic: Topic):
         """설정된 스타일에 따라 영상을 만든다."""
-        style = str(self.config.get("video.style", "card")).lower()
+        style = str(self.config.get("video.style", "presenter")).lower()
+        if style == "presenter":
+            return self._make_presenter_video(topic)
         if style == "news":
             return self._make_news_video(topic)
         if style == "card":
             return self._make_card_video(topic)
         return self._make_broll_video(topic)
+
+    # ---- 진행자형 (진행자 클립 + 오버레이) ----
+
+    def _make_presenter_video(self, topic: Topic):
+        """진행자 클립 하나를 재사용하고 그 위에 텍스트·데이터 카드를 얹는다.
+
+        영상마다 사람을 새로 만들지 않는 것이 핵심이다. 그래야 무료로
+        매일 무인 운영이 되고, 화면에 나오는 사람도 항상 같아 채널로 보인다.
+        """
+        video_cfg = self.config.section("video")
+        cards_cfg = video_cfg.get("cards", {})
+        presenter_cfg = video_cfg.get("presenter", {})
+        shorts_cfg = self.config.section("platforms.youtube").get("shorts", {})
+
+        seconds_range = video_cfg.get("target_seconds", [40, 55])
+        target_seconds = int(sum(seconds_range) / 2)
+        max_seconds = int(shorts_cfg.get("max_seconds", 59))
+
+        script = generate_card_script(
+            self.llm, topic,
+            target_seconds=target_seconds,
+            max_seconds=max_seconds,
+            item_count=int(cards_cfg.get("item_count", 5)),
+        )
+
+        work = self._work_dir("presenter", topic)
+        resolution = shorts_cfg.get("resolution", [1080, 1920])
+        size = (int(resolution[0]), int(resolution[1]))
+
+        clip = self.config.path("video.presenter.clip", "assets/presenter/presenter.mp4")
+        fallback = None
+        synthetic = False
+        if not clip.exists():
+            # 진행자 클립이 없으면 AI 앵커 정지 이미지로 대체한다
+            fallback = anchor_portrait(
+                self.config.path("video.news.anchor_dir", "assets/anchor"),
+                seed=int(video_cfg.get("news", {}).get("anchor_seed", 4242)),
+                provider=self.config.get("video.imagegen.provider"),
+            )
+            synthetic = fallback is not None
+            if fallback is None:
+                raise RuntimeError(
+                    f"진행자 클립({clip})도 AI 앵커도 준비하지 못했습니다."
+                )
+
+        accents = list(presenter_cfg.get("accents", ["blue", "yellow", "red"])) or ["blue"]
+        card_ratio = float(presenter_cfg.get("card_top_ratio", 0.66))
+
+        voice_kwargs = {
+            "voice": video_cfg.get("voice", "ko-KR-SunHiNeural"),
+            "rate": video_cfg.get("rate", "+0%"),
+            "pitch": video_cfg.get("pitch", "+0Hz"),
+        }
+
+        scenes: list[PresenterScene] = []
+
+        def add(spec: OverlaySpec, narration: str, index: int) -> None:
+            overlay = render_overlay(
+                spec, work / f"ov_{index:02d}.png", size=size, card_top_ratio=card_ratio
+            )
+            tts = synthesize(narration, work / f"narr_{index:02d}.mp3", **voice_kwargs)
+            scenes.append(
+                PresenterScene(overlay, tts.audio_path, tts.duration, tts.words)
+            )
+
+        # 오프닝 — 제목만 크게
+        add(
+            OverlaySpec(
+                kicker=topic.title, headline=script.title,
+                highlight="", accent=accents[0],
+            ),
+            script.hook or script.title, 0,
+        )
+
+        # 항목 — 헤드라인 + 데이터 카드
+        for index, item in enumerate(script.items, start=1):
+            card_value = str(item.visual.get("text", "")).strip() if item.visual else ""
+            add(
+                OverlaySpec(
+                    kicker=script.title,
+                    headline=item.name,
+                    highlight=item.highlight,
+                    accent=accents[(index - 1) % len(accents)],
+                    card_badge=item.rank_label,
+                    card_value=card_value or item.name,
+                    card_label=truncate(item.caption, 40),
+                ),
+                item.narration, index,
+            )
+
+        # 클로징
+        if script.outro and cards_cfg.get("outro_card", True):
+            add(
+                OverlaySpec(kicker=topic.title, headline=script.title, accent=accents[0]),
+                script.outro, len(script.items) + 1,
+            )
+
+        bgm_cfg = video_cfg.get("bgm", {})
+        result = build_presenter_video(
+            scenes, work / "video.mp4", work,
+            presenter_clip=clip if clip.exists() else None,
+            fallback_image=fallback,
+            width=size[0], height=size[1],
+            fps=int(shorts_cfg.get("fps", 30)),
+            hold_seconds=float(cards_cfg.get("hold_seconds", 0.35)),
+            subtitle_opts=video_cfg.get("subtitles", {}),
+            bgm_path=bgm_cfg.get("path") if bgm_cfg.get("enabled") else None,
+            bgm_volume=float(bgm_cfg.get("volume", 0.05)),
+        )
+
+        if result.duration > max_seconds:
+            log.warning(
+                "완성 영상이 %.1f초로 상한(%d초)을 넘었습니다. item_count 를 줄이세요.",
+                result.duration, max_seconds,
+            )
+
+        # AI 앵커로 대체된 경우에만 합성 미디어 고지가 필요하다.
+        # 실제 촬영 클립을 쓰면 AI 생성물이 아니다.
+        script.synthetic_media = synthetic
+
+        thumbnail = None
+        try:
+            thumbnail = extract_thumbnail(result.path, work / "thumbnail.jpg", 1.5)
+        except Exception as exc:
+            log.warning("썸네일 추출 실패(무시): %s", exc)
+
+        return result.path, script, thumbnail
 
     # ---- 뉴스 방송형 (생성 이미지 + AI 앵커) ----
 

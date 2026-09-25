@@ -103,10 +103,25 @@ def write_ass(
     outline_color: str = "black",
     outline_width: int = 4,
     margin_v: int = 420,
+    box: bool = False,
+    box_opacity: float = 0.55,
 ) -> Path:
-    """libass 로 번인할 .ass 자막 파일을 쓴다."""
+    """libass 로 번인할 .ass 자막 파일을 쓴다.
+
+    box=True 면 글자 뒤에 반투명 띠를 깐다. 야외 촬영본처럼 배경이 복잡한
+    영상에서는 테두리만으로는 잘 안 읽혀서 띠가 필요하다.
+    """
     target = Path(out_path)
     ensure_dir(target.parent)
+
+    if box:
+        # BorderStyle=3 은 글자 뒤 상자. Outline 값이 상자 여백이 된다.
+        border_style, border_size = 3, max(6, outline_width * 3)
+        alpha = int(max(0.0, min(1.0, 1.0 - box_opacity)) * 255)
+        back_colour = f"&H{alpha:02X}000000"
+    else:
+        border_style, border_size = 1, outline_width
+        back_colour = "&H80000000"
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -117,7 +132,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{_ass_color(font_color)},{_ass_color(font_color)},{_ass_color(outline_color)},&H80000000,-1,0,0,0,100,100,0,0,1,{outline_width},2,2,60,60,{margin_v},1
+Style: Default,{font_name},{font_size},{_ass_color(font_color)},{_ass_color(font_color)},{_ass_color(outline_color)},{back_colour},-1,0,0,0,100,100,0,0,{border_style},{border_size},0,2,60,60,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

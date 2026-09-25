@@ -128,12 +128,26 @@ platforms:
 # ---------------------------------------------------------------------
 video:
   # 영상 스타일
+  #   presenter : 진행자 영상 위에 상단 헤드라인·중앙 자막·데이터 카드를 얹는다.
+  #               진행자 클립 하나를 계속 재사용하므로 무료로 매일 돌릴 수 있다.
   #   news  : 내용과 관련된 이미지를 AI 로 생성해 방송 화면으로 구성.
   #           이미지를 못 만든 장면은 AI 앵커가 전하는 화면으로 대체. (일반 뉴스 권장)
   #   card  : 단색 배경 + 직접 그린 카드가 넘어가는 형식.
   #           주식·통계처럼 도해가 핵심인 주제에 적합.
   #   broll : 스톡 영상 배경 + 흐르는 자막 (초기 방식)
-  style: news
+  style: presenter
+
+  # ---- 진행자 스타일 ----
+  presenter:
+    # 진행자 클립. 영상마다 새로 만들지 않고 이 하나를 계속 재사용한다.
+    # 직접 촬영하거나, 라이선스가 있는 스톡 영상이거나,
+    # 유료 AI 영상 생성으로 한 번만 뽑아 두면 된다.
+    # 비워 두면 AI 앵커 정지 이미지에 느린 확대를 걸어 대체한다.
+    clip: assets/presenter/presenter.mp4
+    # 정보 카드 세로 위치(화면 비율). 자막 띠와 겹치지 않게 0.62 이상 권장.
+    card_top_ratio: 0.66
+    # 항목마다 돌아가며 쓸 강조색
+    accents: [blue, yellow, red]
 
   # ---- 이미지 생성 (news 스타일에서 사용) ----
   imagegen:
@@ -178,13 +192,17 @@ video:
   # 자막
   subtitles:
     enabled: true
+    # presenter 스타일은 배경이 복잡해서 글자 뒤에 반투명 띠를 깐다
+    box: true
+    box_opacity: 0.55
     font_size: 72
     font_color: "white"
     outline_color: "black"
     outline_width: 4
     # 한 화면에 띄울 최대 글자 수
-    max_chars_per_cue: 18
-    margin_v: 420
+    max_chars_per_cue: 16
+    # 하단에서 띄울 거리. presenter 스타일은 카드 자리를 비워야 해서 크게 잡는다.
+    margin_v: 820
   # 배경 클립 소스 우선순위
   stock_providers: [pexels, pixabay]
   # 배경 전환 간격(초)

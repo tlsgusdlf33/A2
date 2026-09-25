@@ -157,6 +157,7 @@ class CardItem:
     caption: str
     visual: dict = field(default_factory=dict)
     image_prompt: str = ""    # 뉴스 스타일에서 배경 이미지를 생성할 영어 묘사
+    highlight: str = ""       # name 중 강조색으로 칠할 부분
     rank: int = 0             # 1 이 가장 높은 순위
 
     @property
@@ -331,6 +332,13 @@ def generate_card_script(
                 caption=truncate(str(raw.get("caption", "")).strip(), 90),
                 visual=_clean_visual(raw.get("visual")),
                 image_prompt=_clean_image_prompt(raw.get("image_prompt", "")),
+                # 강조는 name 안에 실제로 들어 있을 때만 의미가 있다
+                highlight=(
+                    str(raw.get("highlight", "")).strip()
+                    if str(raw.get("highlight", "")).strip() and
+                       str(raw.get("highlight", "")).strip() in name
+                    else ""
+                ),
                 # 배열 마지막이 1위인 역순 카운트다운
                 rank=total - index,
             )

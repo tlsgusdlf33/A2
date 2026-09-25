@@ -226,9 +226,18 @@ def cmd_doctor(args) -> int:
             warnings.append(f"{label} 인증 없음 — {path}")
             print(f"  ⚠️  {label}: {path} (없음)")
 
-    style = config.get("video.style", "news")
+    style = config.get("video.style", "presenter")
     print(f"\n영상 스타일: {style} (항목 {config.get('video.cards.item_count', 5)}개)")
-    if style == "news":
+    if style == "presenter":
+        clip = config.path("video.presenter.clip", "assets/presenter/presenter.mp4")
+        if clip.exists():
+            print(f"  ✅ 진행자 클립: {clip}")
+        else:
+            warnings.append(
+                f"진행자 클립 없음({clip}) — AI 앵커 정지 이미지로 대체됩니다"
+            )
+            print(f"  ⚠️  진행자 클립 없음 → AI 앵커 정지 이미지로 대체")
+    if style in ("news", "presenter"):
         anchor_file = config.path("video.news.anchor_dir", "assets/anchor") / "anchor.jpg"
         if anchor_file.exists():
             print(f"  ✅ 앵커 초상: {anchor_file}")

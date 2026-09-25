@@ -9,6 +9,8 @@ from .cards import CardSpec, Theme, render_intro_card, render_item_card
 from .charts import draw_bars, draw_candles, synth_candles
 from .fonts import ass_font_name, korean_font_path, load_font
 from .imagegen import GeneratedImage, generate_image, scene_prompt
+from .overlay import OverlaySpec, render_overlay
+from .presenter import PresenterScene, build_presenter_video
 from .stock import StockAsset, fetch_article_images, fetch_backgrounds
 from .subtitles import Cue, group_cues, write_ass, write_srt
 from .tts import TTSResult, WordTiming, synthesize
@@ -30,6 +32,8 @@ __all__ = [
     "BroadcastSpec", "render_broadcast_card", "anchor_portrait",
     "generate_anchor_candidates", "ANCHOR_PROMPT",
     "generate_image", "scene_prompt", "GeneratedImage",
+    "OverlaySpec", "render_overlay",
+    "PresenterScene", "build_presenter_video",
     "synth_candles", "draw_candles", "draw_bars",
     "load_font", "korean_font_path", "ass_font_name",
 ]
