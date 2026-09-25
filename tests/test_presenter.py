@@ -181,3 +181,43 @@ def test_plain_subtitle_uses_outline_border(tmp_path):
 
     path = write_ass([Cue("자막", 0, 1)], tmp_path / "s.ass", box=False)
     assert _style_fields(path)["BorderStyle"] == "1"
+
+
+# ---------------------------------------------------------------- 외형 조합
+#
+# 얼굴/의상/배경/구도를 따로 두는 이유는 "이 얼굴 그대로 옷만 바꿔줘"가 되게 하기 위함이다.
+
+def test_look_swaps_outfit_while_keeping_face():
+    from autopub.media.looks import FACES, resolve
+
+    anchor = resolve("anchor")
+    street = resolve("anchor", outfit="street_knit", scene="street_bench")
+    # 얼굴 묘사는 그대로, 의상만 달라진다
+    assert FACES[anchor.face] in street.prompt()
+    assert "BLACK lace-trim knit" in street.prompt()
+    assert "NAVY business blazer" not in street.prompt()
+
+
+def test_outfit_appears_before_scene_in_prompt():
+    """프롬프트가 길어지면 뒤쪽 토큰이 무시된다. 의상은 반드시 배경보다 앞이어야 한다."""
+    from autopub.media.looks import resolve
+
+    prompt = resolve("street").prompt()
+    assert prompt.index("wearing") < prompt.index("sunny Korean street")
+
+
+def test_unknown_face_falls_back_without_crashing():
+    from autopub.media.looks import FACES, resolve
+
+    look = resolve("street", face="없는얼굴")
+    assert FACES["4"] in look.prompt()
+
+
+def test_resolve_overrides_only_given_fields():
+    from autopub.media.looks import resolve
+
+    base = resolve("street")
+    changed = resolve("street", seed=99)
+    assert changed.seed == 99
+    assert changed.outfit == base.outfit
+    assert changed.face == base.face
