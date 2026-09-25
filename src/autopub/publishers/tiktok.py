@@ -221,6 +221,8 @@ class TikTokPublisher(Publisher):
                 "disable_duet": bool(self.settings.get("disable_duet", False)),
                 "disable_stitch": bool(self.settings.get("disable_stitch", False)),
                 "video_cover_timestamp_ms": int(payload.get("cover_ms", 1000)),
+                # AI 생성 콘텐츠 표시. 미표시 시 정책 위반이 된다.
+                "is_aigc": bool(payload.get("synthetic_media")),
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
@@ -230,6 +232,8 @@ class TikTokPublisher(Publisher):
             },
         }
 
+        if payload.get("synthetic_media"):
+            log.info("  AI 생성 콘텐츠(is_aigc)로 표시합니다")
         log.info("TikTok 업로드 시작: %s (%.1fMB, privacy=%s)", title[:40], size / 1_048_576, privacy)
         data = self._post(INIT_URL, body)
         publish_id = data.get("publish_id", "")

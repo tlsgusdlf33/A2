@@ -89,6 +89,64 @@ def cmd_run(args) -> int:
     return 0 if not (blog.failed or shorts.failed) else 1
 
 
+def cmd_anchor(args) -> int:
+    """AI 앵커 초상을 만들고 고른다.
+
+    매번 다른 얼굴이 나오면 채널로 보이지 않는다. 한 번 골라 고정해 두고
+    계속 같은 사람을 쓴다. 공개 발행 전에 사람이 직접 확인하는 단계이기도 하다.
+    """
+    import shutil
+    from pathlib import Path
+
+    from .media.broadcast import (
+        ANCHOR_PROMPT,
+        anchor_portrait,
+        generate_anchor_candidates,
+    )
+
+    config = load_config(args.config)
+    anchor_dir = config.path("video.news.anchor_dir", "assets/anchor")
+    provider = config.get("video.imagegen.provider")
+
+    if args.pick:
+        source = Path(args.pick)
+        if not source.exists():
+            print(f"❌ 파일이 없습니다: {source}")
+            return 1
+        anchor_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, anchor_dir / "anchor.jpg")
+        print(f"✅ 앵커로 확정했습니다: {anchor_dir / 'anchor.jpg'}")
+        return 0
+
+    if args.candidates:
+        folder = anchor_dir / "candidates"
+        print(f"후보 {args.candidates}장을 만듭니다 (공급자: {provider})…")
+        made = generate_anchor_candidates(
+            folder, args.candidates, start_seed=args.seed, provider=provider
+        )
+        if not made:
+            print("❌ 후보를 만들지 못했습니다. 네트워크와 공급자 설정을 확인하세요.")
+            return 1
+        print(f"\n{len(made)}장 생성:")
+        for path in made:
+            print(f"  {path}")
+        print(
+            "\n마음에 드는 파일을 골라 확정하세요:\n"
+            f"  python -m autopub anchor --pick {made[0]}"
+        )
+        return 0
+
+    path = anchor_portrait(anchor_dir, seed=args.seed, provider=provider)
+    if path is None:
+        print("❌ 앵커 초상을 만들지 못했습니다.")
+        return 1
+    print(f"✅ 현재 앵커: {path}")
+    print(f"\n프롬프트:\n  {ANCHOR_PROMPT}")
+    print("\n⚠️  공개 발행 전에 이미지를 직접 열어서 확인하세요.")
+    print("   다른 얼굴을 원하면: python -m autopub anchor --candidates 6")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """실제로 돌리기 전에 빠진 것을 먼저 알려준다."""
     import os
@@ -167,9 +225,21 @@ def cmd_doctor(args) -> int:
             warnings.append(f"{label} 인증 없음 — {path}")
             print(f"  ⚠️  {label}: {path} (없음)")
 
-    print(f"\n영상 스타일: {config.get('video.style', 'card')} "
-          f"(테마 {config.get('video.cards.theme', 'cream')}, "
-          f"항목 {config.get('video.cards.item_count', 5)}개)")
+    style = config.get("video.style", "news")
+    print(f"\n영상 스타일: {style} (항목 {config.get('video.cards.item_count', 5)}개)")
+    if style == "news":
+        anchor_file = config.path("video.news.anchor_dir", "assets/anchor") / "anchor.jpg"
+        if anchor_file.exists():
+            print(f"  ✅ 앵커 초상: {anchor_file}")
+        else:
+            warnings.append(
+                "앵커 초상 미확정 — 첫 실행 때 자동 생성됩니다. "
+                "`python -m autopub anchor` 로 먼저 확인하세요."
+            )
+            print("  ⚠️  앵커 초상 없음 (첫 실행 시 자동 생성)")
+        print(f"  이미지 생성: {config.get('video.imagegen.provider', 'pollinations')}")
+    else:
+        print(f"  테마: {config.get('video.cards.theme', 'cream')}")
 
     print("\n일일 한도")
     print("─" * 62)
@@ -216,6 +286,11 @@ def main(argv: list[str] | None = None) -> int:
     shorts_parser.add_argument("--only", choices=["youtube", "tiktok"], help="한 플랫폼만")
     shorts_parser.set_defaults(func=cmd_shorts)
     sub.add_parser("run", help="블로그+숏폼 한 번씩").set_defaults(func=cmd_run)
+    anchor_parser = sub.add_parser("anchor", help="AI 앵커 초상 생성/선택")
+    anchor_parser.add_argument("-n", "--candidates", type=int, help="후보를 N장 생성")
+    anchor_parser.add_argument("--pick", help="이 파일을 앵커로 확정")
+    anchor_parser.add_argument("--seed", type=int, default=4242, help="생성 시드")
+    anchor_parser.set_defaults(func=cmd_anchor)
     sub.add_parser("doctor", help="설치/설정 점검").set_defaults(func=cmd_doctor)
 
     args = parser.parse_args(argv)

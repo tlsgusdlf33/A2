@@ -99,24 +99,16 @@ class YouTubePublisher(Publisher):
             total += len(clean)
         return result
 
-    def publish(self, payload: dict[str, Any]) -> PublishResult:
-        """payload: {video_path, title, description, tags, thumbnail_path?}"""
-        from googleapiclient.errors import HttpError
-        from googleapiclient.http import MediaFileUpload
-
-        video_path = Path(payload["video_path"])
-        if not video_path.exists():
-            raise PublishError(f"영상 파일이 없습니다: {video_path}")
-
-        title = truncate(str(payload["title"]).replace("<", "").replace(">", ""), TITLE_LIMIT)
-        description = truncate(str(payload.get("description", "")), DESC_LIMIT)
-        tags = self._trim_tags(payload.get("tags", []))
-
+    def build_body(self, payload: dict[str, Any]) -> dict:
+        """videos.insert 에 보낼 본문. 업로드와 분리해 두어 검증이 쉽다."""
+        title = truncate(
+            str(payload["title"]).replace("<", "").replace(">", ""), TITLE_LIMIT
+        )
         body = {
             "snippet": {
                 "title": title,
-                "description": description,
-                "tags": tags,
+                "description": truncate(str(payload.get("description", "")), DESC_LIMIT),
+                "tags": self._trim_tags(payload.get("tags", [])),
                 "categoryId": str(self.settings.get("category_id", "24")),
                 "defaultLanguage": "ko",
                 "defaultAudioLanguage": "ko",
@@ -126,6 +118,26 @@ class YouTubePublisher(Publisher):
                 "selfDeclaredMadeForKids": bool(self.settings.get("made_for_kids", False)),
             },
         }
+
+        # AI 생성 이미지/진행자를 쓴 영상은 반드시 합성 콘텐츠로 표시해야 한다.
+        # 미표시 상태로 반복 업로드하면 채널 제재 대상이 된다.
+        if payload.get("synthetic_media"):
+            body["status"]["containsSyntheticMedia"] = True
+            log.info("  합성 콘텐츠(AI 생성)로 표시합니다")
+
+        return body
+
+    def publish(self, payload: dict[str, Any]) -> PublishResult:
+        """payload: {video_path, title, description, tags, thumbnail_path?}"""
+        from googleapiclient.errors import HttpError
+        from googleapiclient.http import MediaFileUpload
+
+        video_path = Path(payload["video_path"])
+        if not video_path.exists():
+            raise PublishError(f"영상 파일이 없습니다: {video_path}")
+
+        body = self.build_body(payload)
+        title = body["snippet"]["title"]
 
         service = self._service()
         media = MediaFileUpload(

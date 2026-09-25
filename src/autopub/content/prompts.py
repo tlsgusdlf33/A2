@@ -184,6 +184,7 @@ CARD_USER = """\
       "name": "항목 이름. 10자 이내의 짧은 명사구",
       "narration": "이 카드에서 읽을 내레이션. 2~3문장, 55자 내외의 구어체",
       "caption": "카드에 글자로 띄울 요약. 한두 문장, 45자 내외",
+      "image_prompt": "이 항목의 배경 이미지를 만들 영어 묘사. 사물·장소·풍경만 쓸 것",
       "visual": {{
         "type": "text | bars | candles 중 하나",
         "text": "type 이 text 일 때: 화면 가운데 크게 띄울 핵심 단어나 수치. 8자 이내",
@@ -212,6 +213,12 @@ CARD_USER = """\
   되어야 합니다. 한국어 TTS 는 1초에 약 {cps}글자를 읽으므로
   전체 합계가 약 {target_chars}자가 되도록 맞추세요.
 - "구독", "좋아요" 요청은 넣지 마세요.
+- image_prompt 는 **반드시 영어**로, **사람이 등장하지 않는** 장면을 묘사하세요.
+  실존 인물의 이름이나 얼굴을 묘사하면 절대 안 됩니다. 실제로 일어나지 않은 장면을
+  그 사람의 모습으로 만들어 뉴스처럼 보여주는 것이 되기 때문입니다.
+  사물, 장소, 건물, 풍경, 상징물로 대체하세요.
+  예: "삼성전자 실적" → "modern semiconductor factory clean room, rows of machines"
+      "국회 통과" → "exterior of a large government assembly building at dusk"
 """
 
 

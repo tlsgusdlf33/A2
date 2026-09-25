@@ -179,7 +179,7 @@ def _draw_visual(draw, image: Image.Image, box: tuple[int, int, int, int],
     elif kind == "image":
         path = visual.get("path")
         if path and Path(path).exists():
-            _paste_cover(image, Path(path), box, radius=28)
+            paste_cover(image, Path(path), box, radius=28)
 
     elif kind in ("text", "keyword", ""):
         # 그래픽이 없으면 강조 문구를 크게 세운다
@@ -197,7 +197,7 @@ def _draw_visual(draw, image: Image.Image, box: tuple[int, int, int, int],
                 y += font.size * 1.24
 
 
-def _paste_cover(canvas: Image.Image, path: Path, box: tuple[int, int, int, int],
+def paste_cover(canvas: Image.Image, path: Path, box: tuple[int, int, int, int],
                  radius: int = 28) -> None:
     """이미지를 박스에 꽉 차게(cover) 넣고 모서리를 둥글린다."""
     left, top, right, bottom = box
@@ -243,6 +243,10 @@ def _normalize_items(items: list) -> list[dict]:
         elif isinstance(item, str) and item.strip():
             normalized.append({"name": item.strip(), "visual": {}})
     return normalized
+
+
+# 예전 이름 호환
+_paste_cover = paste_cover
 
 
 def _new_canvas(theme: Theme, size: tuple[int, int]) -> tuple[Image.Image, ImageDraw.ImageDraw]:

@@ -18,9 +18,14 @@ from .content.shorts import CardScript, generate_card_script
 from .llm import build_llm
 from .logutil import get_logger
 from .media import (
+    BroadcastSpec,
     CardScene,
     CardSpec,
     Theme,
+    anchor_portrait,
+    generate_image,
+    render_broadcast_card,
+    scene_prompt,
     build_card_video,
     build_short_video,
     extract_thumbnail,
@@ -221,6 +226,7 @@ class Pipeline:
 
         for name, publisher in active.items():
             try:
+                synthetic = bool(getattr(script, "synthetic_media", False))
                 if name == "youtube":
                     payload = {
                         "video_path": video_path,
@@ -228,9 +234,14 @@ class Pipeline:
                         "description": script.youtube_description(),
                         "tags": script.hashtags,
                         "thumbnail_path": thumbnail,
+                        "synthetic_media": synthetic,
                     }
                 else:
-                    payload = {"video_path": video_path, "title": script.tiktok_caption()}
+                    payload = {
+                        "video_path": video_path,
+                        "title": script.tiktok_caption(),
+                        "synthetic_media": synthetic,
+                    }
 
                 result = publisher.publish(payload)
                 self.state.record_publish(
@@ -252,9 +263,145 @@ class Pipeline:
     def _make_video(self, topic: Topic):
         """설정된 스타일에 따라 영상을 만든다."""
         style = str(self.config.get("video.style", "card")).lower()
+        if style == "news":
+            return self._make_news_video(topic)
         if style == "card":
             return self._make_card_video(topic)
         return self._make_broll_video(topic)
+
+    # ---- 뉴스 방송형 (생성 이미지 + AI 앵커) ----
+
+    def _make_news_video(self, topic: Topic):
+        """항목마다 내용과 관련된 이미지를 생성해 방송 화면으로 만든다.
+
+        이미지를 만들지 못한 항목은 AI 앵커가 전하는 화면으로 대체한다.
+        둘 다 합성 미디어이므로 업로드 시 AI 생성 고지가 자동으로 켜진다.
+        """
+        video_cfg = self.config.section("video")
+        cards_cfg = video_cfg.get("cards", {})
+        news_cfg = video_cfg.get("news", {})
+        shorts_cfg = self.config.section("platforms.youtube").get("shorts", {})
+
+        seconds_range = video_cfg.get("target_seconds", [40, 55])
+        target_seconds = int(sum(seconds_range) / 2)
+        max_seconds = int(shorts_cfg.get("max_seconds", 59))
+
+        script = generate_card_script(
+            self.llm, topic,
+            target_seconds=target_seconds,
+            max_seconds=max_seconds,
+            item_count=int(cards_cfg.get("item_count", 5)),
+        )
+
+        work = self._work_dir("news", topic)
+        resolution = shorts_cfg.get("resolution", [1080, 1920])
+        size = (int(resolution[0]), int(resolution[1]))
+
+        image_cfg = self.config.section("video.imagegen")
+        provider = image_cfg.get("provider")
+        gen_size = tuple(image_cfg.get("size", [768, 1344]))
+        cache_dir = self.config.path("video.imagegen.cache_dir", "assets/.imgcache")
+
+        anchor = anchor_portrait(
+            self.config.path("video.news.anchor_dir", "assets/anchor"),
+            seed=int(news_cfg.get("anchor_seed", 4242)),
+            provider=provider,
+            auto_create=bool(news_cfg.get("auto_create_anchor", True)),
+        )
+        if anchor is None:
+            log.warning("앵커 초상을 준비하지 못했습니다. 이미지 생성에만 의존합니다.")
+
+        voice_kwargs = {
+            "voice": video_cfg.get("voice", "ko-KR-SunHiNeural"),
+            "rate": video_cfg.get("rate", "+0%"),
+            "pitch": video_cfg.get("pitch", "+0Hz"),
+        }
+
+        scenes: list[CardScene] = []
+        generated_count = 0
+
+        def add_scene(card_path, narration: str, index: int) -> None:
+            tts = synthesize(narration, work / f"narr_{index:02d}.mp3", **voice_kwargs)
+            scenes.append(CardScene(card_path, tts.audio_path, tts.duration))
+
+        # 오프닝 — 앵커가 방송을 연다
+        opening = render_broadcast_card(
+            BroadcastSpec(
+                headline=script.title,
+                caption=script.hook,
+                kicker=str(news_cfg.get("kicker", "뉴스")),
+                ticker=topic.title,
+                image_path=anchor,
+            ),
+            work / "card_00.png", size=size,
+        )
+        add_scene(opening, script.hook or script.title, 0)
+
+        # 항목 — 관련 이미지를 만들고, 실패하면 앵커 화면
+        for index, item in enumerate(script.items, start=1):
+            image_path = None
+            if item.image_prompt:
+                result = generate_image(
+                    scene_prompt(item.image_prompt),
+                    work / f"scene_{index:02d}.jpg",
+                    size=(int(gen_size[0]), int(gen_size[1])),
+                    seed=abs(hash((topic.key, index))) % 1_000_000,
+                    provider=provider,
+                    cache_dir=cache_dir,
+                )
+                if result:
+                    image_path = result.path
+                    generated_count += 1
+
+            if image_path is None:
+                log.info("항목 %d: 관련 이미지가 없어 앵커 화면으로 대체합니다", index)
+                image_path = anchor
+
+            card = render_broadcast_card(
+                BroadcastSpec(
+                    headline=item.name,
+                    caption=item.caption,
+                    kicker=(
+                        item.rank_label
+                        if news_cfg.get("rank_kicker", True) and item.rank_label
+                        else str(news_cfg.get("kicker", "속보"))
+                    ),
+                    ticker=script.title,
+                    image_path=image_path,
+                ),
+                work / f"card_{index:02d}.png", size=size,
+            )
+            add_scene(card, item.narration, index)
+
+        # 클로징 — 다시 앵커
+        if script.outro and cards_cfg.get("outro_card", True):
+            closing = render_broadcast_card(
+                BroadcastSpec(
+                    headline=script.title, caption=script.outro,
+                    kicker="정리", ticker=topic.title, image_path=anchor,
+                ),
+                work / f"card_{len(script.items) + 1:02d}.png", size=size,
+            )
+            add_scene(closing, script.outro, len(script.items) + 1)
+
+        bgm_cfg = video_cfg.get("bgm", {})
+        result = build_card_video(
+            scenes, work / "video.mp4", work,
+            width=size[0], height=size[1],
+            fps=int(shorts_cfg.get("fps", 30)),
+            hold_seconds=float(cards_cfg.get("hold_seconds", 0.45)),
+            punch_in=bool(cards_cfg.get("punch_in", True)),
+            bgm_path=bgm_cfg.get("path") if bgm_cfg.get("enabled") else None,
+            bgm_volume=float(bgm_cfg.get("volume", 0.06)),
+        )
+
+        log.info(
+            "뉴스 영상 완성: 생성 이미지 %d장 / 앵커 화면 %d장",
+            generated_count, len(script.items) - generated_count,
+        )
+        # 합성 미디어이므로 업로드 시 AI 고지를 켜야 한다
+        script.synthetic_media = True
+        return result.path, script, opening
 
     # ---- 카드형 (권장) ----
 

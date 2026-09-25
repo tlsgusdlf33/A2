@@ -75,6 +75,35 @@ PIXABAY_API_KEY=...
 
 ---
 
+## 2-1. 이미지 생성 (news 스타일)
+
+기본값은 **키가 필요 없습니다.** 그대로 두면 바로 동작합니다.
+
+```ini
+# 선택: 다른 공급자로 바꿀 때만
+IMAGEGEN_PROVIDER=pollinations     # pollinations | together | cloudflare
+TOGETHER_API_KEY=                  # together 사용 시
+CF_ACCOUNT_ID=                     # cloudflare 사용 시
+CF_API_TOKEN=
+```
+
+### AI 앵커 확정 (권장, 1회)
+
+```bash
+python -m autopub anchor --candidates 6
+# 생성된 파일을 열어보고 마음에 드는 것을 고른 뒤
+python -m autopub anchor --pick assets/anchor/candidates/candidate_1137.jpg
+```
+
+> ⚠️ 무료 생성 모델은 프롬프트를 느슨하게 주면 선정적이거나 비율이 깨진 결과를
+> 내놓습니다. 프롬프트를 강하게 제약해 두었지만, **공개 발행 전에 앵커 이미지를
+> 반드시 직접 확인하세요.** 확정해 두면 이후에는 같은 이미지만 재사용합니다.
+
+GitHub Actions 에서 쓰려면 `assets/anchor/anchor.jpg` 를 레포에 커밋하세요
+(민감 정보가 아니므로 커밋해도 됩니다).
+
+---
+
 ## 3. 티스토리
 
 Open API가 종료되어 **브라우저 세션**으로 동작합니다.

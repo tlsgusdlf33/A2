@@ -31,6 +31,7 @@ class ShortsScript:
     description: str = ""
     hashtags: list[str] = field(default_factory=list)
     topic: Topic | None = None
+    synthetic_media: bool = False
 
     @property
     def narration(self) -> str:
@@ -145,6 +146,9 @@ def generate_shorts_script(
 
 _ALLOWED_VISUALS = {"text", "bars", "candles", "image"}
 
+# 합성 미디어 고지. 유튜브·틱톡 모두 AI 생성 콘텐츠 표시를 요구한다.
+AI_DISCLOSURE = "※ 이 영상의 이미지와 진행자는 AI로 생성되었습니다."
+
 
 @dataclass
 class CardItem:
@@ -152,6 +156,7 @@ class CardItem:
     narration: str
     caption: str
     visual: dict = field(default_factory=dict)
+    image_prompt: str = ""    # 뉴스 스타일에서 배경 이미지를 생성할 영어 묘사
     rank: int = 0             # 1 이 가장 높은 순위
 
     @property
@@ -170,6 +175,8 @@ class CardScript:
     description: str = ""
     hashtags: list[str] = field(default_factory=list)
     topic: Topic | None = None
+    # AI 생성 이미지/앵커를 쓴 영상인지. 업로드 시 플랫폼 고지를 켜는 근거가 된다.
+    synthetic_media: bool = False
 
     @property
     def narration_parts(self) -> list[str]:
@@ -196,10 +203,13 @@ class CardScript:
         return f"{truncate(self.title, 85)} #Shorts"
 
     def youtube_description(self) -> str:
-        return ShortsScript(
+        body = ShortsScript(
             title=self.title, hook=self.hook, scenes=[],
             description=self.description, hashtags=self.hashtags, topic=self.topic,
         ).youtube_description()
+        if self.synthetic_media:
+            body = f"{AI_DISCLOSURE}\n\n{body}"
+        return truncate(body, 4900)
 
     def tiktok_caption(self) -> str:
         tags = " ".join(f"#{tag}" for tag in self.hashtags[:6])
@@ -243,6 +253,31 @@ def _clean_visual(raw: object) -> dict:
 
     text = _keyword(str(raw.get("text", "")).strip(), limit=12)
     return {"type": "text", "text": text} if text else {}
+
+
+# 이미지 프롬프트에 사람이 들어가면 실존 인물의 가짜 장면을 만들게 된다
+_PERSON_WORDS = re.compile(
+    r"\b(person|people|man|men|woman|women|girl|boy|face|portrait|crowd|"
+    r"politician|president|ceo|celebrity|actor|singer|player)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_image_prompt(raw: object) -> str:
+    """장면 이미지 프롬프트를 검증한다.
+
+    한글이 섞여 있으면 생성 모델이 제대로 못 알아듣고,
+    사람을 묘사하면 실존 인물의 가짜 장면을 만들어낼 위험이 있다.
+    둘 중 하나라도 걸리면 프롬프트를 버리고 앵커 화면으로 떨어뜨린다.
+    """
+    text = str(raw or "").strip()
+    if not text or len(text) < 8:
+        return ""
+    if re.search(r"[가-힣]", text):
+        return ""
+    if _PERSON_WORDS.search(text):
+        return ""
+    return text[:200]
 
 
 def _keyword(text: str, limit: int = 12) -> str:
@@ -295,6 +330,7 @@ def generate_card_script(
                 narration=narration,
                 caption=truncate(str(raw.get("caption", "")).strip(), 90),
                 visual=_clean_visual(raw.get("visual")),
+                image_prompt=_clean_image_prompt(raw.get("image_prompt", "")),
                 # 배열 마지막이 1위인 역순 카운트다운
                 rank=total - index,
             )

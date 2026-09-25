@@ -8,7 +8,79 @@
                                   └ (숏폼) 카드 렌더 → 카드별 TTS → ffmpeg → 업로드
 ```
 
-숏폼은 **카운트다운 카드** 형식입니다. 스톡 영상 위에 자막을 얹는 방식이 아니라,
+## 숏폼 영상 스타일 3가지
+
+`config.yaml` 의 `video.style` 로 고릅니다.
+
+| 스타일 | 화면 | 적합한 주제 |
+|---|---|---|
+| **`news`** (기본) | 내용과 관련된 이미지를 AI로 생성해 방송 화면으로 구성. 못 만든 장면은 **AI 앵커**가 전달 | 일반 뉴스·이슈 |
+| `card` | 단색 배경 + 직접 그린 카드 카운트다운 | 주식·통계처럼 도해가 핵심인 주제 |
+| `broll` | 스톡 영상 + 흐르는 자막 | 초기 방식 (권장하지 않음) |
+
+### news — 생성 이미지 + AI 앵커
+
+```
+ ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+ │   [AI 생성 영상]│   │   [AI 생성 영상]│   │   [AI 생성 영상]│
+ │                 │   │                 │   │                 │
+ │   AI 앵커       │   │  생성된 관련    │   │   AI 앵커       │
+ │   (오프닝)      │ → │  이미지          │ → │  (이미지 실패 시)│
+ │                 │   │                 │   │                 │
+ │ [속보]          │   │ [3위]           │   │ [1위]           │
+ │ ▌헤드라인       │   │ ▌헤드라인       │   │ ▌헤드라인       │
+ │ ┌─ 설명 박스 ─┐ │   │ ┌─ 설명 박스 ─┐ │   │ ┌─ 설명 박스 ─┐ │
+ │ NEWS ─ 티커 ──  │   │ NEWS ─ 티커 ──  │   │ NEWS ─ 티커 ──  │
+ └─────────────────┘   └─────────────────┘   └─────────────────┘
+```
+
+항목마다 **내용과 관련된 이미지를 직접 생성**하고, 만들지 못한 항목만
+AI 앵커 화면으로 대체합니다. 이미지 생성은 **키가 필요 없는 무료 엔드포인트**
+(Pollinations)가 기본이고, Together AI·Cloudflare Workers AI 무료 티어로 교체할 수 있습니다.
+
+> **진짜 text-to-video 는 무료로 돌릴 방법이 없습니다.** 대신 이미지를 생성해
+> 느린 확대로 움직임을 줍니다. 뉴스 숏폼에서는 이 편이 자막 가독성도 좋고
+> 실패 지점도 적습니다. 입 모양을 맞추는 립싱크(Wav2Lip 등)는 상용 이용이
+> 제한된 라이선스가 많아 넣지 않았습니다.
+
+### AI 앵커
+
+앵커가 매번 다른 얼굴이면 채널로 보이지 않습니다. 그래서 **한 번 만들어 고정**합니다.
+
+```bash
+python -m autopub anchor --candidates 6    # 후보 6장 생성
+python -m autopub anchor --pick assets/anchor/candidates/candidate_1137.jpg
+```
+
+`assets/anchor/anchor.jpg` 가 확정된 앵커입니다. 설정하지 않으면 첫 실행 때
+`anchor_seed` 로 자동 생성되지만, **공개 발행 전에 반드시 직접 열어서 확인하세요.**
+
+### ⚠️ AI 생성 고지는 자동으로 켜집니다
+
+유튜브와 틱톡 모두 합성 콘텐츠 표시를 요구합니다. 무인 업로드라 사람이 매번
+체크할 수 없으므로 코드가 자동으로 처리합니다.
+
+- YouTube: `status.containsSyntheticMedia = true`
+- TikTok: `post_info.is_aigc = true`
+- 영상 화면 우상단에 `AI 생성 영상` 배지
+- 설명란 첫 줄에 고지 문구
+
+미표시 상태로 반복 업로드하면 채널 제재 대상이 되므로 끄지 마세요.
+
+### 실존 인물은 그리지 않습니다
+
+뉴스 주제에는 실존 인물이 섞여 있습니다. 그 사람의 모습으로 **실제로 일어나지 않은
+장면**을 만들어 뉴스처럼 내보내는 것이 이 기능의 가장 큰 위험입니다.
+
+그래서 장면 이미지 프롬프트에 사람(`person`, `politician`, `crowd`, `face` …)이
+들어가면 **프롬프트를 버리고 앵커 화면으로 떨어뜨립니다.** 한글 프롬프트와
+너무 짧은 프롬프트도 같은 처리를 합니다.
+
+---
+
+### card — 카운트다운 카드
+
+카드 형식은 **카운트다운** 구조입니다. 스톡 영상 위에 자막을 얹는 방식이 아니라,
 단색 배경에 직접 그린 카드를 한 장씩 넘깁니다.
 
 ```
@@ -32,7 +104,6 @@
 - **카드마다 그 카드의 내레이션을 따로 합성**하므로 화면 전환과 말이 정확히 맞습니다.
 - **외부 API 가 전혀 필요 없습니다.** 스톡 키 없이도 품질이 그대로입니다.
 
-`config.yaml` 의 `video.style` 로 `card`(기본) / `broll`(스톡 영상) 을 고릅니다.
 배색은 `video.cards.theme` 에서 `cream · mint · lemon · sky · charcoal` 중 선택합니다.
 
 ---
@@ -110,6 +181,7 @@ Content Posting API는 무료지만:
 | 글·대본 생성 | **Gemini 무료 티어** (기본) / Groq·OpenRouter 무료 모델 / Claude(유료) | 무료 |
 | 음성 합성 | **edge-tts** (Microsoft Neural 한국어 음성) | 무료 |
 | 자막 | edge-tts WordBoundary → ASS 번인 (STT 불필요) | 무료 |
+| 이미지 생성 | Pollinations (키 불필요) / Together AI / Cloudflare Workers AI | 무료 |
 | 카드 그래픽 | Pillow 로 직접 렌더링 (캔들차트·막대그래프 포함) | 무료 |
 | 배경 영상·사진 | Pexels / Pixabay API *(broll 스타일에서만)* | 무료 |
 | 영상 합성 | ffmpeg | 무료 |
@@ -149,6 +221,7 @@ python -m autopub shorts --dry-run     # work/*/video.mp4 생성
 python -m autopub blog                 # 티스토리 1건
 python -m autopub shorts               # 쇼츠 1건 → 유튜브 + 틱톡
 python -m autopub status               # 오늘 사용량 / 잔여 한도
+python -m autopub anchor               # AI 앵커 초상 확인/생성
 ```
 
 각 플랫폼 인증 설정은 **[SETUP.md](SETUP.md)** 에 단계별로 정리해 두었습니다.
@@ -179,7 +252,8 @@ src/autopub/
   trends/       트렌드 수집·병합·필터 (Google Trends, 뉴스 RSS, 유튜브)
   llm/          LLM 공급자 추상화 (Gemini / Anthropic / OpenAI 호환)
   content/      프롬프트, 블로그 글 생성, 숏폼 대본 생성
-  media/        카드 렌더링(cards/charts/fonts), TTS, 자막, 스톡 소재, ffmpeg 합성
+  media/        이미지 생성(imagegen), 방송 레이아웃·AI 앵커(broadcast),
+                카드 렌더링(cards/charts/fonts), TTS, 자막, ffmpeg 합성
   publishers/   티스토리(Playwright) / 유튜브(Data API) / 틱톡(Content Posting API)
   pipeline.py   오케스트레이션 (한 번 실행 = 1건 발행)
   state.py      발행 이력·일일 한도 (JSON, Actions에서 커밋되어 유지)
@@ -201,4 +275,6 @@ python -m pytest -m integration       # 실제 영상까지 만들어 검증
 
 - 생성된 콘텐츠의 **저작권·명예훼손·플랫폼 약관 위반 책임은 운영자 본인에게 있습니다.**
 - 실제 인물·사건을 다루는 자동 생성 콘텐츠는 특히 주의가 필요합니다. 차단 키워드를 넉넉히 유지하세요.
-- 각 플랫폼의 AI 생성 콘텐츠 공시 정책을 확인하세요 (틱톡은 `is_aigc` 필드를 지원합니다).
+- AI 생성 콘텐츠 공시는 코드가 자동으로 켭니다(위 참조). **끄지 마세요.**
+- AI 앵커는 가상의 인물입니다. 실존 인물을 닮게 만들거나 실존 방송사의 이름·로고를
+  쓰지 마세요. 사칭이 됩니다.

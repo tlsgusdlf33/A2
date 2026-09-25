@@ -79,6 +79,10 @@ jobs:
           OPENAI_COMPAT_MODEL: ${{ vars.OPENAI_COMPAT_MODEL }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          IMAGEGEN_PROVIDER: ${{ vars.IMAGEGEN_PROVIDER || 'pollinations' }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           YOUTUBE_TOKEN_FILE: secrets/youtube_token.json
           TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
@@ -107,6 +111,7 @@ jobs:
           path: |
             work/**/video.mp4
             work/**/card_*.png
+            work/**/scene_*.jpg
             work/**/subs.srt
           if-no-files-found: ignore
           retention-days: 5

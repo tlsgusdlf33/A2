@@ -128,10 +128,34 @@ platforms:
 # ---------------------------------------------------------------------
 video:
   # 영상 스타일
-  #   card  : 단색 배경 + 직접 그린 카드가 넘어가는 형식 (권장)
-  #           주제와 화면이 항상 일치하고 채널 고유의 톤이 생긴다.
-  #   broll : 스톡 영상 배경 + 흐르는 자막 (기존 방식)
-  style: card
+  #   news  : 내용과 관련된 이미지를 AI 로 생성해 방송 화면으로 구성.
+  #           이미지를 못 만든 장면은 AI 앵커가 전하는 화면으로 대체. (일반 뉴스 권장)
+  #   card  : 단색 배경 + 직접 그린 카드가 넘어가는 형식.
+  #           주식·통계처럼 도해가 핵심인 주제에 적합.
+  #   broll : 스톡 영상 배경 + 흐르는 자막 (초기 방식)
+  style: news
+
+  # ---- 이미지 생성 (news 스타일에서 사용) ----
+  imagegen:
+    # pollinations(무료·키 불필요, 기본) | together | cloudflare
+    provider: pollinations
+    # 9:16 에 가까운 비율로 뽑아야 cover 크롭에서 잘리지 않는다
+    size: [768, 1344]
+    # 같은 프롬프트/시드는 다시 만들지 않는다 (무료 한도 절약)
+    cache_dir: assets/.imgcache
+
+  # ---- 뉴스 방송형 ----
+  news:
+    # 화면 좌상단 말머리
+    kicker: 속보
+    # 항목 말머리를 순위("3위")로 표시할지. false 면 위의 kicker 를 쓴다.
+    rank_kicker: true
+    anchor_dir: assets/anchor
+    # 앵커 얼굴을 고정하는 시드. 바꾸면 다른 사람이 된다.
+    anchor_seed: 4242
+    # 확정된 초상이 없을 때 자동 생성할지.
+    # false 로 두면 `python -m autopub anchor` 로 직접 고를 때까지 앵커 화면을 쓰지 않는다.
+    auto_create_anchor: true
 
   cards:
     # cream | mint | lemon | sky | charcoal
