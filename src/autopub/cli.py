@@ -128,11 +128,12 @@ def cmd_anchor(args) -> int:
             print("❌ 후보를 만들지 못했습니다. 네트워크와 공급자 설정을 확인하세요.")
             return 1
         print(f"\n{len(made)}장 생성:")
-        for path in made:
-            print(f"  {path}")
+        for number, (path, label) in enumerate(made, start=1):
+            print(f"  {number}. {label}")
+            print(f"     {path}")
         print(
             "\n마음에 드는 파일을 골라 확정하세요:\n"
-            f"  python -m autopub anchor --pick {made[0]}"
+            f"  python -m autopub anchor --pick {made[0][0]}"
         )
         return 0
 

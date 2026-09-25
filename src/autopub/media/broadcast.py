@@ -25,16 +25,61 @@ from .imagegen import generate_image
 log = get_logger(__name__)
 
 # 앵커 초상 프롬프트.
-# 느슨하게 쓰면 선정적이거나 비율이 깨진 결과가 나온다. 복장·구도·표정을
+#
+# 어떤 후보를 뽑든 절대 흔들리면 안 되는 제약. 느슨하게 쓰면 선정적이거나
+# 비율이 깨진 결과가 나온다(무료 모델에서 실측 확인). 구도·복장·노출을
 # 전부 못 박아서 '뉴스 앵커'에서 벗어나지 못하게 한다.
-ANCHOR_PROMPT = (
-    "professional Korean female television news anchor, early 30s, "
-    "navy business blazer over a white collared blouse buttoned to the neck, "
+ANCHOR_BASE = (
+    "professional Korean female television news anchor, "
     "head and shoulders portrait only, centered, facing camera, "
-    "calm confident neutral expression, natural makeup, tidy shoulder-length hair, "
-    "modern broadcast news studio background with soft blue bokeh, "
-    "even studio key lighting, corporate, modest professional attire"
+    "collared blouse buttoned to the neck, modest professional attire, "
+    "natural makeup, modern broadcast news studio background with soft bokeh, "
+    "even studio key lighting, corporate, photorealistic"
 )
+
+# 후보를 시드만 바꿔 뽑으면 비슷한 얼굴만 나온다.
+# 나이대·헤어·의상·분위기를 실제로 다르게 줘야 고를 값이 생긴다.
+ANCHOR_VARIATIONS: list[dict[str, str]] = [
+    {
+        "label": "20대 후반 · 단발 보브 · 네이비",
+        "prompt": "late 20s, chin-length bob haircut, navy blue blazer, "
+                  "bright approachable smile, cool blue studio background",
+    },
+    {
+        "label": "30대 초반 · 긴 생머리 · 버건디",
+        "prompt": "early 30s, long straight black hair, burgundy blazer, "
+                  "calm composed expression, warm neutral studio background",
+    },
+    {
+        "label": "30대 중반 · 레이어드 단발 · 차콜",
+        "prompt": "mid 30s, shoulder-length layered hair, charcoal grey suit jacket, "
+                  "authoritative trustworthy expression, dark studio background",
+    },
+    {
+        "label": "20대 중반 · 포니테일 · 아이보리",
+        "prompt": "mid 20s, neat ponytail, ivory blazer, "
+                  "friendly cheerful expression, bright airy studio background",
+    },
+    {
+        "label": "40대 초반 · 숏컷 · 블랙",
+        "prompt": "early 40s, short cropped hair, black suit jacket, "
+                  "seasoned dignified expression, deep navy studio background",
+    },
+    {
+        "label": "30대 · 웨이브 · 파스텔 블루",
+        "prompt": "early 30s, soft wavy shoulder-length hair, pastel blue blazer, "
+                  "gentle warm expression, light grey studio background",
+    },
+]
+
+# 기본 앵커(변형 없이 쓸 때)
+ANCHOR_PROMPT = f"{ANCHOR_BASE}, early 30s, navy business blazer, tidy shoulder-length hair, calm confident neutral expression"
+
+
+def variation_prompt(index: int) -> tuple[str, str]:
+    """(설명 라벨, 프롬프트) — 후보 index 번째."""
+    variation = ANCHOR_VARIATIONS[index % len(ANCHOR_VARIATIONS)]
+    return variation["label"], f"{ANCHOR_BASE}, {variation['prompt']}"
 
 DEFAULT_ANCHOR_SEED = 4242
 
@@ -106,18 +151,24 @@ def generate_anchor_candidates(
     start_seed: int = 1000,
     size: tuple[int, int] = ANCHOR_SIZE,
     provider: str | None = None,
-) -> list[Path]:
-    """후보 초상을 여러 장 만든다. 사람이 고르는 용도."""
+) -> list[tuple[Path, str]]:
+    """후보 초상을 여러 장 만든다. 사람이 고르는 용도.
+
+    나이대·헤어·의상·분위기를 바꿔 가며 뽑기 때문에 취향의 폭이 넓다.
+    반환값은 (파일 경로, 설명 라벨) 목록.
+    """
     folder = ensure_dir(out_dir)
-    made: list[Path] = []
+    made: list[tuple[Path, str]] = []
     for index in range(count):
+        label, prompt = variation_prompt(index)
         seed = start_seed + index * 137
+        log.info("후보 %d/%d 생성 중: %s", index + 1, count, label)
         result = generate_image(
-            ANCHOR_PROMPT, folder / f"candidate_{seed}.jpg",
+            prompt, folder / f"candidate_{index + 1:02d}_{seed}.jpg",
             size=size, seed=seed, provider=provider,
         )
         if result:
-            made.append(result.path)
+            made.append((result.path, label))
     return made
 
 
