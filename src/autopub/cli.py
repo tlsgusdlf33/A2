@@ -109,7 +109,7 @@ def cmd_doctor(args) -> int:
 
     for module, label in [
         ("httpx", "HTTP"), ("yaml", "설정"), ("feedparser", "RSS"),
-        ("edge_tts", "TTS"), ("markdown", "마크다운"),
+        ("edge_tts", "TTS"), ("markdown", "마크다운"), ("PIL", "카드 렌더링"),
         ("googleapiclient", "YouTube 업로드"), ("playwright", "티스토리 자동화"),
     ]:
         try:
@@ -118,6 +118,16 @@ def cmd_doctor(args) -> int:
         except ImportError:
             warnings.append(f"{module} 미설치 — {label} 기능 사용 불가")
             print(f"  ⚠️  {module} ({label})")
+
+    # 카드 스타일은 한글 굵은 글꼴이 없으면 글자가 □ 로 나온다
+    try:
+        from .media.fonts import korean_font_path
+
+        font_path, _ = korean_font_path(bold=True)
+        print(f"  ✅ 한글 글꼴: {font_path}")
+    except Exception as exc:
+        problems.append(f"한글 글꼴 없음 — 카드 자막이 □ 로 나옵니다 ({exc})")
+        print("  ❌ 한글 글꼴")
 
     print("\n환경변수")
     print("─" * 62)
@@ -156,6 +166,10 @@ def cmd_doctor(args) -> int:
         else:
             warnings.append(f"{label} 인증 없음 — {path}")
             print(f"  ⚠️  {label}: {path} (없음)")
+
+    print(f"\n영상 스타일: {config.get('video.style', 'card')} "
+          f"(테마 {config.get('video.cards.theme', 'cream')}, "
+          f"항목 {config.get('video.cards.item_count', 5)}개)")
 
     print("\n일일 한도")
     print("─" * 62)

@@ -44,7 +44,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-noto-cjk
-          fc-list :lang=ko family | head -3
+          # 굵은 한글 글꼴이 없으면 카드 글자가 □ 로 나온다
+          fc-list :lang=ko:weight=bold family | head -3
 
       - name: 의존성 설치
         run: pip install -r requirements.txt
@@ -105,6 +106,7 @@ jobs:
           name: shorts-${{ github.run_id }}
           path: |
             work/**/video.mp4
+            work/**/card_*.png
             work/**/subs.srt
           if-no-files-found: ignore
           retention-days: 5

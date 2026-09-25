@@ -127,6 +127,24 @@ platforms:
 # 영상 제작 (무료 스택: edge-tts + 무료 스톡 + ffmpeg)
 # ---------------------------------------------------------------------
 video:
+  # 영상 스타일
+  #   card  : 단색 배경 + 직접 그린 카드가 넘어가는 형식 (권장)
+  #           주제와 화면이 항상 일치하고 채널 고유의 톤이 생긴다.
+  #   broll : 스톡 영상 배경 + 흐르는 자막 (기존 방식)
+  style: card
+
+  cards:
+    # cream | mint | lemon | sky | charcoal
+    theme: cream
+    # 카운트다운 항목 수 (많을수록 길어진다)
+    item_count: 5
+    # 내레이션이 끝난 뒤 카드를 더 보여줄 시간(초) — 읽을 여유를 준다
+    hold_seconds: 0.45
+    # 카드가 정지 이미지로 보이지 않도록 아주 느린 확대를 준다
+    punch_in: true
+    # 마지막에 정리 카드를 넣을지
+    outro_card: true
+
   # 한국어 Neural 보이스 (edge-tts, 무료)
   voice: ko-KR-SunHiNeural     # 대안: ko-KR-InJoonNeural, ko-KR-HyunsuMultilingualNeural
   rate: "+8%"

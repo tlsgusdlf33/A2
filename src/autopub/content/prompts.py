@@ -139,3 +139,89 @@ def build_shorts_prompt(topic: Topic, seconds: int) -> tuple[str, str]:
         cps=KOREAN_CHARS_PER_SEC,
         target_chars=target_chars,
     )
+
+
+# --------------------------------------------------------------------------
+# 카드형 숏폼 (카운트다운 리스트)
+#
+# 스톡 영상 위에 자막을 얹는 방식은 아무리 다듬어도 '템플릿 티'가 난다.
+# 단색 배경 카드 + 순위 카운트다운은 만들기도 쉽고 끝까지 보게 만든다.
+# --------------------------------------------------------------------------
+
+CARD_SYSTEM = """\
+당신은 한국어 숏폼 '카드형 리스트' 영상의 작가입니다.
+화면은 단색 배경 위에 카드가 한 장씩 넘어가는 형식이고,
+1위를 마지막에 공개하는 역순 카운트다운으로 진행됩니다.
+
+반드시 지킬 것:
+- 제공된 '근거 자료'에 있는 내용만 사실로 씁니다. 수치, 날짜, 발언, 순위 근거를
+  지어내지 마세요. 근거가 부족하면 단정하지 말고 일반적으로 알려진 설명만 쓰세요.
+- narration 은 TTS 가 읽습니다. 이모지, 괄호 설명, 특수기호, 마크다운을 쓰지 말고
+  소리 내어 읽었을 때 자연스러운 구어체로 씁니다.
+- caption 은 화면 카드에 글자로 표시됩니다. narration 을 그대로 복사하지 말고,
+  눈으로 읽기 좋은 압축된 문장으로 다시 쓰세요.
+- 첫 3초 안에 궁금증이 걸려야 합니다. "안녕하세요", "오늘은" 으로 시작하지 마세요.
+- 단정적 의혹 제기, 비방, 특정인 사생활 추측, 투자 권유를 하지 않습니다.
+
+출력은 유효한 JSON 객체 하나뿐이어야 합니다. 코드펜스나 설명을 붙이지 마세요.
+"""
+
+CARD_USER = """\
+아래 주제로 {seconds}초 분량의 한국어 카드형 숏폼 대본을 작성하세요.
+
+# 주제
+{title}
+
+# 근거 자료 (이 내용만 사실로 사용)
+{evidence}
+
+# 출력 JSON 스키마
+{{
+  "title": "화면 상단에 크게 들어갈 제목. 18자 이내, 숫자를 포함하고 궁금증을 유발할 것. 예: '지금 꼭 알아야 할 5가지'",
+  "hook": "인트로 카드에서 읽을 내레이션. 한 문장, 25자 내외",
+  "items": [
+    {{
+      "name": "항목 이름. 10자 이내의 짧은 명사구",
+      "narration": "이 카드에서 읽을 내레이션. 2~3문장, 55자 내외의 구어체",
+      "caption": "카드에 글자로 띄울 요약. 한두 문장, 45자 내외",
+      "visual": {{
+        "type": "text | bars | candles 중 하나",
+        "text": "type 이 text 일 때: 화면 가운데 크게 띄울 핵심 단어나 수치. 8자 이내",
+        "labels": ["type 이 bars 일 때: 항목 이름들"],
+        "values": ["type 이 bars 일 때: 위 항목에 대응하는 숫자들"],
+        "pattern": "type 이 candles 일 때: 캔들 패턴 이름",
+        "highlight_label": "type 이 candles 일 때: 강조할 봉에 붙일 두 글자 라벨. 예: 매도"
+      }}
+    }}
+  ],
+  "outro": "마지막 정리 카드에서 읽을 내레이션. 한 문장",
+  "description": "유튜브/틱톡 설명란 문구. 2~3문장",
+  "hashtags": ["해시태그 5~8개, # 없이 단어만"]
+}}
+
+중요한 규칙:
+- items 는 {item_count}개로 만드세요. **역순 카운트다운**이므로 배열의 마지막 항목이 1위입니다.
+  즉 가장 중요하고 임팩트 있는 항목을 배열 맨 뒤에 두세요.
+- visual.type 선택 기준:
+  · "bars"  — 근거 자료에 비교 가능한 **실제 숫자**가 있을 때만. 없으면 절대 쓰지 마세요.
+  · "candles" — 주식 차트 패턴을 설명하는 주제일 때만.
+  · "text"  — 그 외 전부. 확신이 없으면 "text" 를 고르세요.
+- visual.type 이 "text" 일 때 text 는 내용을 요약한 **짧고 강한 단어**여야 합니다.
+  문장을 넣지 마세요. 예: "3배 급증", "역대 최저", "전면 중단"
+- 전체 내레이션(hook + 모든 narration + outro)을 소리 내어 읽으면 약 {seconds}초가
+  되어야 합니다. 한국어 TTS 는 1초에 약 {cps}글자를 읽으므로
+  전체 합계가 약 {target_chars}자가 되도록 맞추세요.
+- "구독", "좋아요" 요청은 넣지 마세요.
+"""
+
+
+def build_card_prompt(topic: Topic, seconds: int, item_count: int = 5) -> tuple[str, str]:
+    target_chars = int(seconds * KOREAN_CHARS_PER_SEC)
+    return CARD_SYSTEM, CARD_USER.format(
+        title=topic.title,
+        evidence=topic.evidence_block() or "(근거 자료 없음)",
+        seconds=seconds,
+        cps=KOREAN_CHARS_PER_SEC,
+        target_chars=target_chars,
+        item_count=item_count,
+    )

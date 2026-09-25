@@ -89,9 +89,57 @@ def _pipeline(tmp_path, payload, monkeypatch):
     return pipeline
 
 
+CARD_PAYLOAD = {
+    "title": "지금 꼭 알아야 할 3가지",
+    "hook": "이거 모르면 손해입니다.",
+    "items": [
+        {"name": "발표 시점", "narration": "오늘 오전에 나온 소식입니다.",
+         "caption": "오늘 오전 보도가 나왔습니다.",
+         "visual": {"type": "text", "text": "오늘 오전"}},
+        {"name": "시장 반응", "narration": "시장은 곧바로 반응했습니다.",
+         "caption": "발표 직후 곧바로 반응이 나왔습니다.",
+         "visual": {"type": "text", "text": "즉시 반응"}},
+        {"name": "파급 효과", "narration": "업계 전반이 영향권에 들어갔습니다.",
+         "caption": "관련 업계 전반이 영향권입니다.",
+         "visual": {"type": "text", "text": "업계 전반"}},
+    ],
+    "outro": "지금부터가 진짜 시작입니다.",
+    "description": "오늘의 이슈 정리입니다.",
+    "hashtags": ["이슈", "정리"],
+}
+
+
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg 없음")
-def test_shorts_pipeline_produces_playable_video(tmp_path, monkeypatch):
+def test_card_pipeline_produces_playable_video(tmp_path, monkeypatch):
+    """카드 스타일 전체 경로: 대본 → 카드 렌더 → 카드별 TTS → ffmpeg."""
+    pipeline = _pipeline(tmp_path, CARD_PAYLOAD, monkeypatch)
+    pipeline.config.data["video"]["style"] = "card"
+
+    try:
+        report = pipeline.run_shorts(["youtube"])
+    except Exception as exc:
+        pytest.skip(f"네트워크 의존 단계 실패: {exc}")
+
+    assert report.published, f"발행 실패: {report.failed}"
+
+    from PIL import Image
+
+    from autopub.media.tts import probe_duration
+
+    video = next(iter((tmp_path / "work").rglob("video.mp4")))
+    assert probe_duration(video) > 5
+
+    # 인트로 + 항목 3개 + 아웃트로 = 카드 5장
+    cards = sorted((tmp_path / "work").rglob("card_*.png"))
+    assert len(cards) == 5
+    with Image.open(cards[0]) as image:
+        assert image.size == (1080, 1920)
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg 없음")
+def test_broll_pipeline_produces_playable_video(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path, SHORTS_PAYLOAD, monkeypatch)
+    pipeline.config.data["video"]["style"] = "broll"
 
     try:
         report = pipeline.run_shorts(["youtube"])

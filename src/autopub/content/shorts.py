@@ -137,3 +137,194 @@ def generate_shorts_script(
         script.estimated_seconds,
     )
     return script
+
+
+# ==========================================================================
+# 카드형 카운트다운 대본
+# ==========================================================================
+
+_ALLOWED_VISUALS = {"text", "bars", "candles", "image"}
+
+
+@dataclass
+class CardItem:
+    name: str
+    narration: str
+    caption: str
+    visual: dict = field(default_factory=dict)
+    rank: int = 0             # 1 이 가장 높은 순위
+
+    @property
+    def rank_label(self) -> str:
+        return f"{self.rank}위" if self.rank else ""
+
+
+@dataclass
+class CardScript:
+    """단색 배경 카드가 넘어가는 형식의 대본."""
+
+    title: str
+    hook: str
+    items: list[CardItem]
+    outro: str = ""
+    description: str = ""
+    hashtags: list[str] = field(default_factory=list)
+    topic: Topic | None = None
+
+    @property
+    def narration_parts(self) -> list[str]:
+        """카드 순서대로의 내레이션 목록 (인트로 → 항목들 → 아웃트로)."""
+        parts = [self.hook] + [item.narration for item in self.items]
+        if self.outro:
+            parts.append(self.outro)
+        return [p for p in parts if p.strip()]
+
+    @property
+    def narration(self) -> str:
+        return " ".join(self.narration_parts)
+
+    @property
+    def estimated_seconds(self) -> float:
+        return len(self.narration.replace(" ", "")) / KOREAN_CHARS_PER_SEC
+
+    def preview_items(self) -> list[dict]:
+        """인트로 카드에 띄울 미리보기 (순위 역순 그대로)."""
+        return [{"name": item.name, "visual": item.visual} for item in self.items]
+
+    # 업로드 메타데이터는 기존 숏폼과 동일한 규칙을 쓴다
+    def youtube_title(self) -> str:
+        return f"{truncate(self.title, 85)} #Shorts"
+
+    def youtube_description(self) -> str:
+        return ShortsScript(
+            title=self.title, hook=self.hook, scenes=[],
+            description=self.description, hashtags=self.hashtags, topic=self.topic,
+        ).youtube_description()
+
+    def tiktok_caption(self) -> str:
+        tags = " ".join(f"#{tag}" for tag in self.hashtags[:6])
+        return truncate(f"{self.title} {tags}".strip(), 150)
+
+
+def _clean_visual(raw: object) -> dict:
+    """LLM 이 준 visual 명세를 검증한다.
+
+    환각한 수치로 그래프를 그리면 잘못된 정보를 그럴듯하게 보여주게 되므로,
+    형식이 맞지 않으면 조용히 text 형으로 떨어뜨린다.
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    kind = str(raw.get("type", "")).strip().lower()
+    if kind not in _ALLOWED_VISUALS:
+        return {}
+
+    if kind == "bars":
+        labels = [str(x).strip() for x in raw.get("labels", []) if str(x).strip()]
+        values: list[float] = []
+        for item in raw.get("values", []):
+            try:
+                values.append(float(str(item).replace(",", "").replace("%", "")))
+            except (TypeError, ValueError):
+                return {}   # 숫자가 아니면 막대그래프를 포기한다
+        if len(labels) < 2 or len(labels) != len(values):
+            return {}
+        return {"type": "bars", "labels": labels[:5], "values": values[:5]}
+
+    if kind == "candles":
+        return {
+            "type": "candles",
+            "pattern": str(raw.get("pattern", "")).strip() or "default",
+            "highlight_label": truncate(str(raw.get("highlight_label", "")).strip(), 4, ""),
+        }
+
+    if kind == "image":
+        return {"type": "image", "path": str(raw.get("path", ""))}
+
+    text = _keyword(str(raw.get("text", "")).strip(), limit=12)
+    return {"type": "text", "text": text} if text else {}
+
+
+def _keyword(text: str, limit: int = 12) -> str:
+    """화면 가운데 크게 띄울 강조 문구로 다듬는다.
+
+    LLM 이 규칙을 어기고 문장을 넣는 경우가 있다. 글자 수로 자르면
+    음절 중간에서 끊겨 보기 흉하므로 어절 경계에서 자른다.
+    """
+    cleaned = re.sub(r"[.!?…]+$", "", text).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+
+    words, kept = cleaned.split(), []
+    for word in words:
+        candidate = " ".join(kept + [word])
+        if len(candidate) > limit:
+            break
+        kept.append(word)
+    # 첫 어절조차 너무 길면 어쩔 수 없이 글자 수로 자른다
+    return " ".join(kept) if kept else cleaned[:limit]
+
+
+def generate_card_script(
+    llm: LLMProvider,
+    topic: Topic,
+    *,
+    target_seconds: int = 48,
+    max_seconds: int = 59,
+    item_count: int = 5,
+) -> CardScript:
+    from .prompts import build_card_prompt
+
+    system, prompt = build_card_prompt(topic, target_seconds, item_count)
+    data = llm.generate_json(system, prompt)
+
+    raw_items = [x for x in data.get("items", []) if isinstance(x, dict)]
+    if not raw_items:
+        raise ValueError("LLM 이 항목(items)을 만들지 못했습니다")
+
+    items: list[CardItem] = []
+    total = len(raw_items)
+    for index, raw in enumerate(raw_items):
+        narration = _clean_narration(raw.get("narration", ""))
+        name = truncate(str(raw.get("name", "")).strip(), 16, "")
+        if not (narration and name):
+            continue
+        items.append(
+            CardItem(
+                name=name,
+                narration=narration,
+                caption=truncate(str(raw.get("caption", "")).strip(), 90),
+                visual=_clean_visual(raw.get("visual")),
+                # 배열 마지막이 1위인 역순 카운트다운
+                rank=total - index,
+            )
+        )
+
+    if not items:
+        raise ValueError("유효한 항목이 하나도 없습니다")
+
+    script = CardScript(
+        title=truncate(str(data.get("title", topic.title)).strip(), 40),
+        hook=_clean_narration(data.get("hook", "")),
+        items=items,
+        outro=_clean_narration(data.get("outro", "")) if data.get("outro") else "",
+        description=str(data.get("description", "")).strip(),
+        hashtags=[t for t in (_sanitize_hashtag(x) for x in data.get("hashtags", [])) if t][:10],
+        topic=topic,
+    )
+
+    # 길이 초과 시 낮은 순위(배열 앞쪽)부터 덜어낸다 — 1위는 반드시 남긴다
+    while script.estimated_seconds > max_seconds and len(script.items) > 3:
+        dropped = script.items.pop(0)
+        log.info(
+            "예상 %.1f초 > %d초 — 최하위 항목 제거: %s",
+            script.estimated_seconds, max_seconds, dropped.name,
+        )
+        for new_rank, item in enumerate(reversed(script.items), start=1):
+            item.rank = new_rank
+
+    log.info(
+        "카드 대본 생성: %s (항목 %d개, 예상 %.1f초)",
+        script.title, len(script.items), script.estimated_seconds,
+    )
+    return script

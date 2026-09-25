@@ -14,14 +14,21 @@ from typing import Any
 from .config import Config
 from .content import generate_blog_post, generate_shorts_script
 from .content.blog import render_html
+from .content.shorts import CardScript, generate_card_script
 from .llm import build_llm
 from .logutil import get_logger
 from .media import (
+    CardScene,
+    CardSpec,
+    Theme,
+    build_card_video,
     build_short_video,
     extract_thumbnail,
     fetch_article_images,
     fetch_backgrounds,
     group_cues,
+    render_intro_card,
+    render_item_card,
     synthesize,
 )
 from .publishers import (
@@ -243,6 +250,105 @@ class Pipeline:
         return report
 
     def _make_video(self, topic: Topic):
+        """설정된 스타일에 따라 영상을 만든다."""
+        style = str(self.config.get("video.style", "card")).lower()
+        if style == "card":
+            return self._make_card_video(topic)
+        return self._make_broll_video(topic)
+
+    # ---- 카드형 (권장) ----
+
+    def _make_card_video(self, topic: Topic):
+        """카운트다운 카드가 넘어가는 형식.
+
+        카드마다 그 카드의 내레이션을 따로 합성하기 때문에
+        화면 전환과 말이 정확히 맞는다.
+        """
+        video_cfg = self.config.section("video")
+        cards_cfg = video_cfg.get("cards", {})
+        shorts_cfg = self.config.section("platforms.youtube").get("shorts", {})
+
+        seconds_range = video_cfg.get("target_seconds", [40, 55])
+        target_seconds = int(sum(seconds_range) / 2)
+        max_seconds = int(shorts_cfg.get("max_seconds", 59))
+
+        script = generate_card_script(
+            self.llm, topic,
+            target_seconds=target_seconds,
+            max_seconds=max_seconds,
+            item_count=int(cards_cfg.get("item_count", 5)),
+        )
+
+        work = self._work_dir("cards", topic)
+        theme = Theme.preset(str(cards_cfg.get("theme", "cream")))
+        resolution = shorts_cfg.get("resolution", [1080, 1920])
+        size = (int(resolution[0]), int(resolution[1]))
+
+        voice_kwargs = {
+            "voice": video_cfg.get("voice", "ko-KR-SunHiNeural"),
+            "rate": video_cfg.get("rate", "+0%"),
+            "pitch": video_cfg.get("pitch", "+0Hz"),
+        }
+
+        scenes: list[CardScene] = []
+
+        def add_scene(card_path, narration: str, index: int) -> None:
+            tts = synthesize(narration, work / f"narr_{index:02d}.mp3", **voice_kwargs)
+            scenes.append(
+                CardScene(card_path=card_path, audio_path=tts.audio_path, duration=tts.duration)
+            )
+
+        # 인트로 카드 — 제목과 항목 미리보기로 끝까지 볼 이유를 만든다
+        intro = render_intro_card(
+            script.title, script.preview_items(), work / "card_00.png", theme, size
+        )
+        add_scene(intro, script.hook or script.title, 0)
+
+        # 항목 카드
+        for index, item in enumerate(script.items, start=1):
+            card = render_item_card(
+                CardSpec(
+                    rank=item.rank_label,
+                    heading=item.name,
+                    caption=item.caption,
+                    visual=item.visual,
+                ),
+                work / f"card_{index:02d}.png", theme, size,
+            )
+            add_scene(card, item.narration, index)
+
+        # 아웃트로 카드
+        if script.outro and cards_cfg.get("outro_card", True):
+            outro = render_item_card(
+                CardSpec(heading=script.title, caption=script.outro),
+                work / f"card_{len(script.items) + 1:02d}.png", theme, size,
+            )
+            add_scene(outro, script.outro, len(script.items) + 1)
+
+        bgm_cfg = video_cfg.get("bgm", {})
+        result = build_card_video(
+            scenes, work / "video.mp4", work,
+            width=size[0], height=size[1],
+            fps=int(shorts_cfg.get("fps", 30)),
+            hold_seconds=float(cards_cfg.get("hold_seconds", 0.45)),
+            punch_in=bool(cards_cfg.get("punch_in", True)),
+            bgm_path=bgm_cfg.get("path") if bgm_cfg.get("enabled") else None,
+            bgm_volume=float(bgm_cfg.get("volume", 0.06)),
+        )
+
+        if result.duration > max_seconds:
+            log.warning(
+                "완성 영상이 %.1f초로 상한(%d초)을 넘었습니다. "
+                "video.cards.item_count 를 줄이세요.",
+                result.duration, max_seconds,
+            )
+
+        # 인트로 카드가 곧 썸네일 — 제목이 가장 잘 보이는 장면이다
+        return result.path, script, intro
+
+    # ---- 스톡 b-roll (기존) ----
+
+    def _make_broll_video(self, topic: Topic):
         """대본 → TTS → 자막 → 배경 → 영상."""
         video_cfg = self.config.section("video")
         shorts_cfg = self.config.section("platforms.youtube").get("shorts", {})

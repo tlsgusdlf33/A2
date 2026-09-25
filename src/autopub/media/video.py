@@ -237,3 +237,165 @@ def extract_thumbnail(video_path: str | Path, dest: str | Path, at_seconds: floa
         timeout=120,
     )
     return target
+
+
+# ==========================================================================
+# 카드형 영상
+#
+# 배경 영상 대신 렌더링한 카드 PNG 를 한 장씩 넘긴다.
+# 카드마다 그 카드의 내레이션 길이만큼 머무르므로 화면과 말이 정확히 맞는다.
+# ==========================================================================
+
+@dataclass
+class CardScene:
+    card_path: Path
+    audio_path: Path
+    duration: float
+
+
+# 카드는 가장자리 여백(64px = 약 5.9%)이 디자인의 일부다.
+# 줌이 그보다 크게 들어가면 테두리가 잘려 나가므로 상한을 둔다.
+CARD_MAX_ZOOM = 1.05
+
+
+def _card_segment(
+    card_path: Path, dest: Path, seconds: float,
+    width: int, height: int, fps: int, *, punch_in: bool = True,
+) -> Path:
+    """카드 PNG 한 장을 지정 길이의 영상 세그먼트로 만든다."""
+    if punch_in:
+        frames = max(1, int(round(seconds * fps)))
+        step = (CARD_MAX_ZOOM - 1.0) / frames
+        # 아주 느린 확대. 정지 이미지처럼 보이지 않으면서 테두리는 지킨다.
+        video_filter = (
+            f"scale={width * 2}:{height * 2},"
+            f"zoompan=z='min(zoom+{step:.6f},{CARD_MAX_ZOOM})'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        )
+    else:
+        video_filter = f"scale={width}:{height},setsar=1,fps={fps}"
+
+    run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-loop", "1", "-i", str(card_path),
+            "-t", f"{seconds:.3f}", "-an",
+            "-vf", video_filter,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-r", str(fps),
+            str(dest),
+        ],
+        timeout=300,
+    )
+    return dest
+
+
+def _padded_audio(source: Path, dest: Path, duration: float) -> Path:
+    """내레이션 뒤에 무음을 붙여 카드 표시 시간과 길이를 맞춘다."""
+    run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-i", str(source),
+            "-af", "apad",
+            "-t", f"{duration:.3f}",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+            str(dest),
+        ],
+        timeout=300,
+    )
+    return dest
+
+
+def _concat_files(parts: list[Path], dest: Path, list_path: Path) -> Path:
+    list_path.write_text(
+        "\n".join(f"file '{part.resolve()}'" for part in parts) + "\n", encoding="utf-8"
+    )
+    run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "concat", "-safe", "0", "-i", str(list_path),
+            "-c", "copy", str(dest),
+        ],
+        timeout=600,
+    )
+    return dest
+
+
+def build_card_video(
+    scenes: list[CardScene],
+    out_path: str | Path,
+    work_dir: str | Path,
+    *,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 30,
+    hold_seconds: float = 0.45,
+    punch_in: bool = True,
+    bgm_path: str | Path | None = None,
+    bgm_volume: float = 0.06,
+) -> VideoResult:
+    """카드 PNG + 카드별 내레이션 → 세로형 mp4."""
+    _require_ffmpeg()
+    if not scenes:
+        raise ValueError("카드 장면이 하나도 없습니다")
+
+    work = ensure_dir(work_dir)
+    target = Path(out_path)
+    ensure_dir(target.parent)
+
+    video_parts: list[Path] = []
+    audio_parts: list[Path] = []
+
+    for index, scene in enumerate(scenes):
+        # 내레이션이 끝나고 잠깐 머물러야 카드를 읽을 시간이 생긴다
+        seconds = scene.duration + hold_seconds
+
+        segment = work / f"card_{index:02d}.mp4"
+        _card_segment(scene.card_path, segment, seconds, width, height, fps,
+                      punch_in=punch_in)
+        video_parts.append(segment)
+        audio_parts.append(
+            _padded_audio(scene.audio_path, work / f"card_{index:02d}.m4a", seconds)
+        )
+
+    video_track = (
+        video_parts[0]
+        if len(video_parts) == 1
+        else _concat_files(video_parts, work / "cards_video.mp4", work / "v.txt")
+    )
+    audio_track = (
+        audio_parts[0]
+        if len(audio_parts) == 1
+        else _concat_files(audio_parts, work / "cards_audio.m4a", work / "a.txt")
+    )
+
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video_track), "-i", str(audio_track)]
+
+    use_bgm = bool(bgm_path) and Path(bgm_path).exists()
+    if use_bgm:
+        cmd += ["-stream_loop", "-1", "-i", str(bgm_path)]
+        cmd += [
+            "-filter_complex",
+            f"[2:a]volume={bgm_volume}[bgm];"
+            f"[1:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            "-map", "0:v", "-map", "[a]",
+        ]
+    else:
+        cmd += ["-map", "0:v", "-map", "1:a"]
+
+    cmd += [
+        "-c:v", "libx264", "-preset", "medium", "-crf", "21",
+        "-profile:v", "high", "-level", "4.1", "-r", str(fps),
+        "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+        "-shortest", "-movflags", "+faststart",
+        str(target),
+    ]
+    run(cmd, timeout=1800)
+
+    total = sum(scene.duration + hold_seconds for scene in scenes)
+    log.info(
+        "카드 영상 완성: %s (카드 %d장, %.1f초, %.1fMB)",
+        target.name, len(scenes), total, target.stat().st_size / 1_048_576,
+    )
+    return VideoResult(path=target, duration=total)
